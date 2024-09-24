@@ -1,19 +1,54 @@
 """
-This script implements a grid-based simulation tool using Pygame to visualize and interact with cellular automata systems, such as Conway's Game of Life. It provides a graphical interface for building custom simulation grids with various rulesets and allows users to dynamically switch between a building mode and a simulation mode. The primary functionality includes:
+This is currently an incremental game which the uses can generate automated energy farms with. I have plans to expand
+this into a hybrid game, where the factory is a building on the overworld, the player can move a character with wasd,
+enter and exit the factory to tweak it as needed, and use their energy for things, and use their colors for stats,
+for example, having a lot of red will make you strong against fire, a lot of blue, strong against water, etc.
+More energy means more ability use. Other factories and characters will exist in the overworld to battle and learn
+factory secrets from.
 
-1. **Grid Customization**: Users can design and configure the grid layout, defining areas of the grid with different rulesets. Each ruleset determines how cells live, die, or replicate based on neighboring cell states.
+This module defines a comprehensive simulation framework for cellular automata within the context of factory design,
+leveraging Pygame for graphical representation and Numba for performance optimization. The system supports multiple 
+automata rulesets, dynamic color manipulation, and player interaction, offering a rich environment to visualize and 
+manipulate game states in real-time.
 
-2. **Rulesets**: The script includes several predefined rulesets, such as Conway's Game of Life, HighLife, and others. Users can switch between these rulesets to experiment with different behaviors in the simulation.
+### Key Features:
+1. **Serialization & Deserialization**: 
+   - Seamlessly encode and decode simulation states using compression and base64 encoding, allowing for easy sharing 
+     of game seeds or restoration of previous states.
+   
+2. **Grid-Based Automata**: 
+   - Implements cellular automata with various rulesets like Conway’s Game of Life, HighLife, and more, providing both 
+     building and simulation modes for diverse gameplay.
+   
+3. **Dynamic Color Handling**: 
+   - Generates and assigns colors to cells dynamically, while also handling color-based interactions, like tallying 
+     living cells based on their proximity to primary colors.
 
-3. **Color System**: The cells are visually represented using a color system where each cell state is mapped to a color. The system dynamically adjusts cell colors based on simulation outcomes, and users can change the color scheme while in simulation mode.
+4. **Inventory & Ruleset Management**: 
+   - Enables player interaction with automata rulesets, including block-based inventory management, and cycling through 
+     available rulesets for gameplay variation.
 
-4. **Clipboard Integration**: The application supports saving and loading grid states using serialized data, which can be copied to and pasted from the system clipboard.
+5. **Interactive UI**: 
+   - Includes a full-featured graphical interface for toggling between modes, purchasing logic blocks, handling grid 
+     interactions, and pausing or resetting simulations.
 
-5. **Interactive Simulation**: Users can pause, reset, and modify the simulation in real-time, allowing for hands-on experimentation with different grid configurations and rulesets.
+6. **Clipboard Support**: 
+   - Provides functionality for copying and pasting simulation states using the clipboard, making sharing and restoring 
+     states intuitive.
 
-6. **Serialization & Deserialization**: Grid states (logic grid and cell states) can be serialized into a compressed base64 string, enabling easy sharing or persistence of grid configurations.
+### Core Classes and Functions:
+- **Factory_View**: 
+   - The main class managing grid display, event handling, and simulation logic.
+   
+- **TextInputBox**: 
+   - A utility class for text input, used for saving and loading game states via seed strings.
 
-7. **Optimization**: The script uses Numba for performance optimization during the simulation update process, handling large grids efficiently by leveraging just-in-time (JIT) compilation.
+- **Serialization/Deserialization**: 
+   - Helper functions `serialize_state` and `deserialize_state` enable conversion of the game state to/from a 
+     compressed, shareable string format.
 
-The application allows users to explore various cellular automata models with an intuitive visual interface while providing mechanisms to save, share, and reload grid states.
+### Numba Optimizations:
+- Several functions are accelerated using Numba's `njit` decorator to improve performance, especially in grid manipulations 
+  and neighbor calculations, critical for the cellular automata’s efficiency.
+
 """
