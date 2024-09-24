@@ -177,7 +177,7 @@ class Factory_View:
         # Append black, white, and dead cell color
         self.colors_list.append((0, 0, 0))          # Black color
         self.colors_list.append((255, 255, 255))    # White color
-        self.dead_cell_color = (25, 25, 25)         # Dead cell color
+        self.dead_cell_color = (127, 127, 127)         # Dead cell color
         self.colors_list.append(self.dead_cell_color)
 
         # Set indices
@@ -223,7 +223,8 @@ class Factory_View:
         self.preprocess_rulesets()
 
         # Modes
-        self.mode = 'building'  # Modes: 'building', 'simulation', 'menu', 'buy_menu'
+        self.mode = 'loading'  # Modes: 'building', 'simulation', 'menu', 'shop'
+        self.previous_mode = 'building'
         self.paused = True
         
         # Other settings
@@ -279,6 +280,9 @@ class Factory_View:
         self.energy_generation_rate = 0.0
         self.energy_generation_timer = 0.0
 
+        # NEW: Notation toggle
+        self.scientific_notation = False  # Add this line to initialize the notation toggle
+
     def preprocess_rulesets(self):
         """Preprocess rulesets into Numba-compatible arrays."""
         num_rulesets = len(RULESETS)
@@ -294,25 +298,69 @@ class Factory_View:
             self.birth_rules_array[idx, :len(B)] = B
             self.survival_rules_array[idx, :len(S)] = S
             self.rule_lengths[idx] = [len(B), len(S)]
-
+            
     def run(self):
         """Main loop of the application."""
         while not self.done:
             self.handle_events()
-            
-            # Track the time since the last simulation step
-            dt = self.clock.tick(self.fps_drawing) / 1000.0  # Time passed since the last frame
-            self.simulation_time_accumulator += dt
 
-            # Update the simulation if enough time has passed
-            if not self.paused and self.simulation_time_accumulator >= self.simulation_interval:
-                self.update()
-                self.simulation_time_accumulator -= self.simulation_interval
+            if self.mode == 'loading':
+                self.handle_loading()
+                # Limit the frame rate during loading
+                self.clock.tick(10)  # 10 FPS during loading
+            else:
+                # Existing code
+                dt = self.clock.tick(self.fps_drawing) / 1000.0
+                self.simulation_time_accumulator += dt
 
-            # Draw the current state
-            self.draw()
-            pygame.display.update()
-            
+                if not self.paused and self.simulation_time_accumulator >= self.simulation_interval:
+                    self.update()
+                    self.simulation_time_accumulator -= self.simulation_interval
+
+                self.draw()
+                pygame.display.update()
+
+    def handle_loading(self):
+        """Display a loading screen and precompile Numba functions."""
+        # Display loading screen
+        self.screen.fill((0, 0, 0))  # Clear screen
+        font = pygame.font.SysFont(None, 48)
+        loading_text = font.render("Loading...", True, (255, 255, 255))
+        text_rect = loading_text.get_rect(center=(self.width // 2, self.height // 2))
+        self.screen.blit(loading_text, text_rect)
+        pygame.display.update()
+
+        # Pre-compile Numba functions by calling them with dummy data
+        self.precompile_numba_functions()
+
+        # After loading is done, switch to 'building' mode
+        self.mode = 'building'
+        self.paused = True  # Start paused or not, depending on desired behavior
+
+    def precompile_numba_functions(self):
+        """Precompile Numba functions by calling them with dummy data."""
+        # Create dummy data matching the expected types
+        dummy_cell_state_grid = np.zeros(self.grid_size, dtype=np.int32)
+        dummy_logic_grid = np.zeros(self.grid_size, dtype=np.int32)
+        dummy_birth_rules_array = self.birth_rules_array
+        dummy_survival_rules_array = self.survival_rules_array
+        dummy_rule_lengths = self.rule_lengths
+        dummy_dead_cell_index = self.dead_cell_index
+        dummy_neighbor_offsets = self.neighbor_offsets
+        dummy_colors_array = self.colors_array  # Add this line
+
+        # Call update_cells() with dummy data
+        update_cells(
+            dummy_cell_state_grid,
+            dummy_logic_grid,
+            dummy_birth_rules_array,
+            dummy_survival_rules_array,
+            dummy_rule_lengths,
+            dummy_dead_cell_index,
+            dummy_neighbor_offsets,
+            dummy_colors_array  # Pass the colors array here
+        )
+    
     def cycle_ruleset(self, forward=True):
         """Cycle through only the rulesets you have blocks for."""
         # Get the list of available rulesets with non-zero blocks or infinite logic
@@ -353,10 +401,10 @@ class Factory_View:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.mode == 'menu':
                     self.mode = self.previous_mode
-                elif self.mode == 'buy_menu':
-                    self.mode = 'building'
+                elif self.mode == 'shop':
+                    self.mode = self.previous_mode  # Return to the correct mode
                 else:
-                    self.previous_mode = self.mode
+                    self.previous_mode = self.mode  # Save the current mode
                     self.mode = 'menu'
                     self.paused = True
 
@@ -364,7 +412,6 @@ class Factory_View:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # Left click
                         mouse_pos = pygame.mouse.get_pos()
-                        # Copy button
                         if self.copy_button_rect.collidepoint(mouse_pos):
                             key = serialize_state(self.logic_grid, self.cell_state_grid, self.logic_inventory)
                             if self.clipboard_available:
@@ -372,7 +419,6 @@ class Factory_View:
                                 print("Seed copied to clipboard.")
                             else:
                                 print("Clipboard not available.")
-                        # Paste button
                         if self.paste_button_rect.collidepoint(mouse_pos):
                             if self.clipboard_available:
                                 try:
@@ -390,22 +436,26 @@ class Factory_View:
                                     print(f"Error accessing clipboard: {e}")
                             else:
                                 print("Clipboard not available.")
-            elif self.mode == 'buy_menu':
-                if event.type == pygame.KEYDOWN and event.key in (pygame.K_b, pygame.K_ESCAPE):
-                    self.mode = 'building'
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    mouse_pos = pygame.mouse.get_pos()
-                    for button_rect, logic_id, quantity in self.buy_buttons:
-                        if button_rect.collidepoint(mouse_pos):
-                            price_per_block = self.logic_prices[logic_id]
-                            total_cost = price_per_block * quantity  # Buying quantity blocks
-                            if self.bonus >= total_cost:
-                                self.bonus -= total_cost
-                                self.logic_inventory[logic_id] += quantity
-                                print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]}")
-                            else:
-                                print("Not enough energy to purchase.")
-                            break
+
+            elif self.mode == 'shop':
+                if event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_b, pygame.K_ESCAPE):
+                        self.mode = self.previous_mode  # Return to the correct mode
+                    elif event.key == pygame.K_n:
+                        self.scientific_notation = not self.scientific_notation  # Toggle notation
+                    elif event.key == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        mouse_pos = pygame.mouse.get_pos()
+                        for button_rect, logic_id, quantity in self.buy_buttons:
+                            if button_rect.collidepoint(mouse_pos):
+                                price_per_block = self.logic_prices[logic_id]
+                                total_cost = price_per_block * quantity  # Buying quantity blocks
+                                if self.bonus >= total_cost:
+                                    self.bonus -= total_cost
+                                    self.logic_inventory[logic_id] += quantity
+                                    print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]}")
+                                else:
+                                    print("Not enough energy to purchase.")
+                                break
             else:
                 # Handle events in other modes
                 if event.type == pygame.KEYDOWN:
@@ -428,8 +478,11 @@ class Factory_View:
                     elif event.key == pygame.K_r:
                         self.reset_game()
                     elif event.key == pygame.K_b:
-                        self.mode = 'buy_menu'
-
+                        # Save the current mode before switching to the buy menu
+                        self.previous_mode = self.mode
+                        self.mode = 'shop'
+                    elif event.key == pygame.K_n:
+                        self.scientific_notation = not self.scientific_notation  # Toggle notation
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button <= 3:
                         self.mouse_buttons[event.button - 1] = True
@@ -602,7 +655,7 @@ class Factory_View:
                                 self.logic_inventory[self.selected_ruleset_id] -= 1
                     else:
                         print("Not enough blocks of this logic type.")
-                elif self.mouse_buttons[2]:  # Right click to erase logic (set to Void state)
+                if self.mouse_buttons[2]:  # Right click to erase logic (set to Void state)
                     old_logic_id = self.logic_grid[row, col]
                     if old_logic_id != 0 and old_logic_id not in self.infinite_logic_ids:
                         self.logic_inventory[old_logic_id] += 1
@@ -636,7 +689,8 @@ class Factory_View:
             # Tally colors every 'tally_frequency' frames
             if self.frame_counter % self.tally_frequency == 0:
                 self.tally_colors()  # Keep for color_counts and total living cells
-                self.bonus += self.energy_generated_last  # Update bonus energy based on births
+                # Adjusted energy generation rate
+                self.bonus += self.energy_generated_last * 1.0  # Reduced energy gain per birth
 
                 # Additional bonus based on color prevalence
                 for logic_id in self.logic_inventory.keys():
@@ -644,17 +698,21 @@ class Factory_View:
                         color_idx = self.logic_id_to_color_index[logic_id]
                         color_count = self.color_counts[color_idx]
                         bonus_for_logic = color_count // 100  # Example bonus calculation
-                        self.bonus += bonus_for_logic
+                        self.bonus += bonus_for_logic * 0.1  # Reduced bonus
 
                 self.energy_generation_timer += self.simulation_interval * self.tally_frequency
 
                 if self.energy_generation_timer >= 1.0:
+                    # Save the value of energy generated for display before resetting
+                    energy_generated_for_display = self.energy_generated_last
+
                     # Calculate energy generation rate
-                    self.energy_generation_rate = self.energy_generated_last / self.energy_generation_timer
+                    self.energy_generation_rate = (energy_generated_for_display * 1.0) / self.energy_generation_timer
+
                     # Reset counters
-                    self.energy_generated_last = 0
+                    self.energy_generated_last = 0  # Only reset after calculating generation rate
                     self.energy_generation_timer = 0.0
-     
+
     def tally_colors(self):
         """Tally the living cells and their colors closest to primary colors."""
         self.color_counts = np.zeros(len(PRIMARY_COLORS), dtype=int)
@@ -679,7 +737,11 @@ class Factory_View:
                         self.color_counts[closest_primary_idx] += 1
 
     def draw_menu(self):
-        # Draw semi-transparent overlay
+        """Draw the menu with the previous mode as the background."""
+        # Draw the background grid from the previous mode (either build or simulation)
+        self.draw_game()
+
+        # Draw the menu overlay on top
         overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 128))  # Semi-transparent black
         self.screen.blit(overlay, (0, 0))
@@ -716,13 +778,17 @@ class Factory_View:
         instruction_rect = instruction_text.get_rect(center=(self.width // 2, box_y + 120))
         self.screen.blit(instruction_text, instruction_rect)
             
-    def draw_buy_menu(self):
-        # Draw semi-transparent overlay
+    def draw_shop(self):
+        """Draw the buy menu with the current mode (building or simulation) as the background."""
+        # Draw the background grid from the current mode (either build or simulation)
+        self.draw_game()
+
+        # Draw the semi-transparent overlay and buy menu on top
         overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 128))  # Semi-transparent black
         self.screen.blit(overlay, (0, 0))
 
-        # Font
+        # Font for drawing text
         font = pygame.font.Font(None, 28)
 
         # Calculate the width of each column based on screen width
@@ -740,7 +806,7 @@ class Factory_View:
         pygame.draw.rect(self.screen, (50, 50, 50), popup_rect)
 
         # Draw the player's current balance at the top
-        balance_text = font.render(f"Current Energy: {self.bonus}", True, (255, 255, 255))
+        balance_text = font.render(f"Current Energy: {self.format_number(self.bonus)}", True, (255, 255, 255))
         balance_rect = balance_text.get_rect(center=(self.width // 2, box_y + 20))
         self.screen.blit(balance_text, balance_rect)
 
@@ -757,7 +823,7 @@ class Factory_View:
             self.screen.blit(logic_text, (left_column_x, y_offset))
 
             # Price (center aligned)
-            price_string = f"{price_per_block:.1e}"  # Format the price as 1e1, etc.
+            price_string = self.format_number(price_per_block)  # Use formatted price
             price_text = font.render(f"Price per block: {price_string}", True, (255, 255, 255))
             price_text_rect = price_text.get_rect(center=(center_column_x, y_offset + 10))  # Center align
             self.screen.blit(price_text, price_text_rect)
@@ -791,26 +857,38 @@ class Factory_View:
             # Draw the game in the background
             self.draw_game()
             self.draw_menu()
-        elif self.mode == 'buy_menu':
+        elif self.mode == 'shop':
             self.draw_game()
-            self.draw_buy_menu()
+            self.draw_shop()
         else:
             self.draw_game()
 
     def draw_game(self):
+        """Draw the game grid and UI based on the current mode."""
+        # Decide which mode to use for drawing the grid
+        if self.mode in ['building', 'simulation']:
+            mode_to_draw = self.mode
+        elif self.mode in ['shop', 'menu']:
+            mode_to_draw = self.previous_mode
+        else:
+            mode_to_draw = self.mode  # default
+
+        # Then, in the drawing code, use mode_to_draw instead of self.mode
         if self.fullscreen:
             # Draw to the smaller centered surface
             self.grid_surface.fill((0, 0, 0))
 
-            # Draw grid
+            # Draw the grid based on mode_to_draw
             for row in range(self.grid_size[0]):
                 for col in range(self.grid_size[1]):
                     x = col * (self.cell_size + self.margin) + self.margin
                     y = row * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
-                    if self.mode == 'building':
+                    if mode_to_draw == 'building':
+                        # In building mode, draw logic grid
                         ruleset_id = self.logic_grid[row, col]
                         color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))
                     else:
+                        # In simulation mode, draw cell state grid
                         color_index = self.cell_state_grid[row, col]
                         color = self.colors_array[color_index]
                     pygame.draw.rect(
@@ -824,15 +902,17 @@ class Factory_View:
             grid_y = (self.screen.get_height() - self.grid_surface.get_height()) // 2
             self.screen.blit(self.grid_surface, (grid_x, grid_y))
         else:
-            # Draw grid directly on the screen
+            # Draw the grid directly on the screen based on mode_to_draw
             for row in range(self.grid_size[0]):
                 for col in range(self.grid_size[1]):
                     x = col * (self.cell_size + self.margin) + self.margin
                     y = row * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
-                    if self.mode == 'building':
+                    if mode_to_draw == 'building':
+                        # In building mode, draw logic grid
                         ruleset_id = self.logic_grid[row, col]
                         color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))
                     else:
+                        # In simulation mode, draw cell state grid
                         color_index = self.cell_state_grid[row, col]
                         color = self.colors_array[color_index]
                     pygame.draw.rect(
@@ -841,103 +921,104 @@ class Factory_View:
                         (x, y, self.cell_size, self.cell_size)
                     )
 
-        # Draw UI elements (adjust positioning as needed)
+        # UI for simulation mode
         font = pygame.font.SysFont(None, 28)
-        mode_text_surface = render_text_with_outline(f"Mode: {self.mode.capitalize()}", font, (255, 255, 255), (0, 0, 0))
-        self.screen.blit(mode_text_surface, (10, 5))
+        font_large = pygame.font.SysFont(None, 48)
+        
+        if self.mode == 'simulation':
+            # Display Mode: Simulation in the top-left corner
+            mode_text_surface = render_text_with_outline(f"Mode: Simulation", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(mode_text_surface, (10, 5))
 
-        if self.mode == 'building':
-            ruleset_text_surface = render_text_with_outline(f"Selected Ruleset: {self.selected_ruleset_name}", font, (255, 255, 255), (0, 0, 0))
-            self.screen.blit(ruleset_text_surface, (200, 5))
-            instructions = "Tab: Switch Mode | A and D: Change Ruleset | B: Buy | R: Reset | F: Fill Bucket"
+            # Start position for the "Alive:" text
+            alive_text = f"Alive: {self.energy}"
+            alive_text_surface = render_text_with_outline(alive_text, font, (255, 255, 255), (0, 0, 0))
+            color_tally_x_position = self.width - 10  # Start from the right side
 
-            # Display logic inventory
-            stats_font = pygame.font.SysFont(None, 28)
-            stats_texts = []
+            # Subtract space for color counters
+            for idx, color in enumerate(PRIMARY_COLORS):
+                color_count = self.color_counts[idx]
+                color_text_surface = render_text_with_outline(str(color_count), font, color, (0, 0, 0))
+                color_tally_x_position -= color_text_surface.get_width() + 10  # Move left for each color tally
+                self.screen.blit(color_text_surface, (color_tally_x_position, 5))
 
-            # Prepare logic IDs in the desired order
-            logic_ids_order = []
-            logic_ids_order.append(RULESET_IDS["Conway"])
-            other_logic_ids = [ruleset_id for ruleset_name, ruleset_id in RULESET_IDS.items() if ruleset_name not in ("Conway", "Void")]
-            logic_ids_order.extend(sorted(other_logic_ids))
-            logic_ids_order.append(RULESET_IDS["Void"])
-
-            # Calculate total width
-            total_width = 0
-            for logic_id in logic_ids_order:
-                logic_name = ID_RULESETS[logic_id]
-                if logic_id in self.infinite_logic_ids:
-                    count_text = "∞"
-                else:
-                    count = self.logic_inventory[logic_id]
-                    count_text = str(count)
-                text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, self.logic_colors_list.get(logic_id, (255, 255, 255)), (0, 0, 0))
-                stats_texts.append(text_surface)
-                total_width += text_surface.get_width() + 10  # Add spacing
-
-            # Start drawing from the right
-            x_position = self.width - total_width - 10  # 10 pixels padding from the right
-
-            for text_surface in stats_texts:
-                self.screen.blit(text_surface, (x_position, 5))
-                x_position += text_surface.get_width() + 10  # Move position for next text
-
-        else:
-            selected_color = self.colors_list[self.selected_color_index]
-            color_text_surface = render_text_with_outline(f"Selected Color: {selected_color}", font, (255, 255, 255), (0, 0, 0))
-            self.screen.blit(color_text_surface, (200, 5))
-            instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset  | Space: Pause | B: Buy | F: Fill Bucket"
-
-            # Additional UI for Simulation mode
+            # Now place the "Alive:" text to the left of the first color counter
+            alive_text_x_position = color_tally_x_position - alive_text_surface.get_width() - 10
+            self.screen.blit(alive_text_surface, (alive_text_x_position, 5))
             if self.paused:
-                # Display "Let's Paint!!" centered with alternating primary colors
+                # Display "Let's Paint!!" in colorful text when paused
                 text = "Let's Paint!!"
-                font_large = pygame.font.SysFont(None, 48)
                 text_surfaces = []
                 for i, char in enumerate(text):
                     color = PRIMARY_COLORS[i % len(PRIMARY_COLORS)]
                     char_surface = render_text_with_outline(char, font_large, color, (0, 0, 0))
                     text_surfaces.append(char_surface)
-                # Calculate total width
+
+                # Calculate total width of the "Let's Paint!!" text
                 total_width = sum(surface.get_width() for surface in text_surfaces)
                 x = (self.width - total_width) // 2
                 y = 5  # Adjust y position if needed
                 for surface in text_surfaces:
                     self.screen.blit(surface, (x, y))
                     x += surface.get_width()
+
             else:
-                # Display "Energy: {self.bonus} (+{self.energy_generation_rate:.1f}/s)" centered
-                bonus_text = f"Energy: {self.bonus} (+{self.energy_generation_rate:.1f}/s)"
-                bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
-                x = (self.width - bonus_surface.get_width()) // 2
+                # Display "Game of Life: Factory" in alternating colors when unpaused
+                text = "Game of Life: Factory"
+                fancy_colors = [(0, 255, 255), (255, 0, 255), (255, 255, 0)]  # Cyan, Magenta, Yellow
+                text_surfaces = []
+                for i, char in enumerate(text):
+                    color = fancy_colors[i % len(fancy_colors)]
+                    char_surface = render_text_with_outline(char, font_large, color, (0, 0, 0))
+                    text_surfaces.append(char_surface)
+
+                # Calculate total width of the "Game of Life: Factory" text
+                total_width = sum(surface.get_width() for surface in text_surfaces)
+                x = (self.width - total_width) // 2
                 y = 5  # Adjust y position if needed
-                self.screen.blit(bonus_surface, (x, 5))
+                for surface in text_surfaces:
+                    self.screen.blit(surface, (x, y))
+                    x += surface.get_width()
 
+            # Display energy and alive cell counts below the text (both paused and unpaused)
+            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate)}/s)"
+            bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
+            x = (self.width - bonus_surface.get_width()) // 2
+            self.screen.blit(bonus_surface, (x, 35))  # Adjust y position to not overlap
 
-            # Alive and color counts aligned to the right
+            # Then draw other simulation UI elements
+            selected_color = self.colors_list[self.selected_color_index]
+            color_text_surface = render_text_with_outline(f"Selected Color: {selected_color}", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(color_text_surface, (200, 5))
+            instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset  | Space: Pause | B: Buy | F: Fill Bucket | N: Notation"
+
+        else:
+            # Building mode UI
+            mode_text_surface = render_text_with_outline(f"Mode: {self.mode.capitalize()}", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(mode_text_surface, (10, 5))
+            # Building mode UI
+            ruleset_text_surface = render_text_with_outline(f"Selected Ruleset: {self.selected_ruleset_name}", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(ruleset_text_surface, (200, 5))
+            instructions = "Tab: Switch Mode | A and D: Change Ruleset | B: Buy | R: Reset | F: Fill Bucket | N: Notation"
+
+            # Display logic inventory
             stats_font = pygame.font.SysFont(None, 28)
-            stats_texts = []
+            x_position = self.width - 10  # 10 pixels padding from the right
 
-            # Alive
-            alive_text = render_text_with_outline(f"Alive: {self.energy}", stats_font, (255, 255, 255), (0, 0, 0))
-            stats_texts.append(alive_text)
+            # Prepare logic IDs in the desired order
+            logic_ids_order = [RULESET_IDS["Conway"]] + sorted(
+                [ruleset_id for ruleset_name, ruleset_id in RULESET_IDS.items() if ruleset_name not in ("Conway", "Void")]
+            ) + [RULESET_IDS["Void"]]
 
-            # Color counts
-            for idx, count in enumerate(self.color_counts):
-                color = PRIMARY_COLORS[idx]
-                count_text = render_text_with_outline(f"{count}", stats_font, color, (0, 0, 0))
-                stats_texts.append(count_text)
+            for logic_id in reversed(logic_ids_order):
+                logic_name = ID_RULESETS[logic_id]
+                count_text = "∞" if logic_id in self.infinite_logic_ids else str(self.logic_inventory[logic_id])
+                text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, self.logic_colors_list.get(logic_id, (255, 255, 255)), (0, 0, 0))
+                x_position -= text_surface.get_width()
+                self.screen.blit(text_surface, (x_position, 5))
+                x_position -= 10  # Move position for next text
 
-            # Calculate total width
-            total_width = sum(text.get_width() + 10 for text in stats_texts)  # 10 pixels spacing
-            x_position = self.width - total_width - 10  # 10 pixels padding from the right
-
-            # Blit texts
-            for text in stats_texts:
-                self.screen.blit(text, (x_position, 5))
-                x_position += text.get_width() + 10  # Move position for next text
-
-        # Instructions at the bottom
+        # Draw instructions at the bottom
         instructions_surface = render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
         self.screen.blit(instructions_surface, (10, self.height - 25))
 
@@ -974,6 +1055,13 @@ class Factory_View:
             # Generate random logic_inventory
             self.logic_inventory = {ruleset_id: np.random.randint(0, total_cells) for ruleset_id in RULESET_IDS.values()}
             print("Generated game state from seed.")
+
+    def format_number(self, number):
+        """Helper function to format numbers based on notation preference."""
+        if self.scientific_notation:
+            return f"{number:.1e}"
+        else:
+            return f"{int(number)}"
 
 class TextInputBox:
     def __init__(self, x, y, w, h, text=''):
