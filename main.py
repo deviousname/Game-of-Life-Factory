@@ -204,7 +204,7 @@ class Factory_View:
 
         # Assign dark grey color to 'Void' logic
         void_logic_id = RULESET_IDS['Void']
-        self.logic_colors_list[void_logic_id] = (50, 50, 50)  # Slightly dark grey
+        self.logic_colors_list[void_logic_id] = (127, 127, 127)  # Slightly dark grey
 
         # Map logic IDs to primary color indices
         self.logic_id_to_color_index = {logic_id: idx for idx, logic_id in enumerate(logic_ids)}
@@ -277,7 +277,7 @@ class Factory_View:
 
         # For energy generation rate
         self.energy_generated_last = 0
-        self.energy_generation_rate = 0.0
+        self.energy_generation_rate  = 0.0
         self.energy_generation_timer = 0.0
 
         # NEW: Notation toggle
@@ -981,7 +981,7 @@ class Factory_View:
                     x += surface.get_width()
 
             # Display energy and alive cell counts below the text (both paused and unpaused)
-            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate)}/s)"
+            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate + 1)}/s)"
             bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
             x = (self.width - bonus_surface.get_width()) // 2
             self.screen.blit(bonus_surface, (x, 35))  # Adjust y position to not overlap
