@@ -1,5 +1,4 @@
-"""
-This is currently an incremental game which the uses can generate automated energy farms with. I have plans to expand
+This is currently an incremental game which the players can craft automated energy farms with. I have plans to expand
 this into a hybrid game, where the factory is a building on the overworld, the player can move a character with wasd,
 enter and exit the factory to tweak it as needed, and use their energy for things, and use their colors for stats,
 for example, having a lot of red will make you strong against fire, a lot of blue, strong against water, etc.
@@ -50,5 +49,3 @@ manipulate game states in real-time.
 ### Numba Optimizations:
 - Several functions are accelerated using Numba's `njit` decorator to improve performance, especially in grid manipulations 
   and neighbor calculations, critical for the cellular automata’s efficiency.
-
-"""
