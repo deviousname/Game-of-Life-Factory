@@ -1,23 +1,57 @@
 """
-This script implements a grid-based simulation tool using Pygame to visualize and interact with cellular automata systems, such as Conway's Game of Life. It provides a graphical interface for building custom simulation grids with various rulesets and allows users to dynamically switch between a building mode and a simulation mode. The primary functionality includes:
+This is currently an incremental game which the uses can generate automated energy farms with. I have plans to expand
+this into a hybrid game, where the factory is a building on the overworld, the player can move a character with wasd,
+enter and exit the factory to tweak it as needed, and use their energy for things, and use their colors for stats,
+for example, having a lot of red will make you strong against fire, a lot of blue, strong against water, etc.
+More energy means more ability use. Other factories and characters will exist in the overworld to battle and learn
+factory secrets from.
 
-1. **Grid Customization**: Users can design and configure the grid layout, defining areas of the grid with different rulesets. Each ruleset determines how cells live, die, or replicate based on neighboring cell states.
+This module defines a comprehensive simulation framework for cellular automata within the context of factory design,
+leveraging Pygame for graphical representation and Numba for performance optimization. The system supports multiple 
+automata rulesets, dynamic color manipulation, and player interaction, offering a rich environment to visualize and 
+manipulate game states in real-time.
 
-2. **Rulesets**: The script includes several predefined rulesets, such as Conway's Game of Life, HighLife, and others. Users can switch between these rulesets to experiment with different behaviors in the simulation.
+### Key Features:
+1. **Serialization & Deserialization**: 
+   - Seamlessly encode and decode simulation states using compression and base64 encoding, allowing for easy sharing 
+     of game seeds or restoration of previous states.
+   
+2. **Grid-Based Automata**: 
+   - Implements cellular automata with various rulesets like Conway’s Game of Life, HighLife, and more, providing both 
+     building and simulation modes for diverse gameplay.
+   
+3. **Dynamic Color Handling**: 
+   - Generates and assigns colors to cells dynamically, while also handling color-based interactions, like tallying 
+     living cells based on their proximity to primary colors.
 
-3. **Color System**: The cells are visually represented using a color system where each cell state is mapped to a color. The system dynamically adjusts cell colors based on simulation outcomes, and users can change the color scheme while in simulation mode.
+4. **Inventory & Ruleset Management**: 
+   - Enables player interaction with automata rulesets, including block-based inventory management, and cycling through 
+     available rulesets for gameplay variation.
 
-4. **Clipboard Integration**: The application supports saving and loading grid states using serialized data, which can be copied to and pasted from the system clipboard.
+5. **Interactive UI**: 
+   - Includes a full-featured graphical interface for toggling between modes, purchasing logic blocks, handling grid 
+     interactions, and pausing or resetting simulations.
 
-5. **Interactive Simulation**: Users can pause, reset, and modify the simulation in real-time, allowing for hands-on experimentation with different grid configurations and rulesets.
+6. **Clipboard Support**: 
+   - Provides functionality for copying and pasting simulation states using the clipboard, making sharing and restoring 
+     states intuitive.
 
-6. **Serialization & Deserialization**: Grid states (logic grid and cell states) can be serialized into a compressed base64 string, enabling easy sharing or persistence of grid configurations.
+### Core Classes and Functions:
+- **Factory_View**: 
+   - The main class managing grid display, event handling, and simulation logic.
+   
+- **TextInputBox**: 
+   - A utility class for text input, used for saving and loading game states via seed strings.
 
-7. **Optimization**: The script uses Numba for performance optimization during the simulation update process, handling large grids efficiently by leveraging just-in-time (JIT) compilation.
+- **Serialization/Deserialization**: 
+   - Helper functions `serialize_state` and `deserialize_state` enable conversion of the game state to/from a 
+     compressed, shareable string format.
 
-The application allows users to explore various cellular automata models with an intuitive visual interface while providing mechanisms to save, share, and reload grid states.
+### Numba Optimizations:
+- Several functions are accelerated using Numba's `njit` decorator to improve performance, especially in grid manipulations 
+  and neighbor calculations, critical for the cellular automata’s efficiency.
+
 """
-
 
 import pygame
 import numpy as np
@@ -29,13 +63,19 @@ import pyperclip
 import hashlib
 
 # Serialization functions
-def serialize_state(logic_grid, cell_state_grid):
+def serialize_state(logic_grid, cell_state_grid, logic_inventory):
     # Convert grids to bytes
     logic_bytes = logic_grid.tobytes()
     cell_state_bytes = cell_state_grid.tobytes()
 
+    # Serialize logic_inventory
+    logic_ids = sorted(RULESET_IDS.values())
+    logic_counts = [logic_inventory[logic_id] for logic_id in logic_ids]
+    logic_counts_array = np.array(logic_counts, dtype=np.int32)
+    logic_inventory_bytes = logic_counts_array.tobytes()
+
     # Concatenate bytes
-    combined_bytes = logic_bytes + cell_state_bytes
+    combined_bytes = logic_bytes + cell_state_bytes + logic_inventory_bytes
 
     # Compress the bytes
     compressed_bytes = zlib.compress(combined_bytes)
@@ -51,16 +91,42 @@ def deserialize_state(key, grid_shape):
     # Decompress the bytes
     combined_bytes = zlib.decompress(compressed_bytes)
 
-    # Calculate the split index
+    # Calculate sizes
     grid_size = grid_shape[0] * grid_shape[1] * np.dtype(np.int32).itemsize
-    logic_bytes = combined_bytes[:grid_size]
-    cell_state_bytes = combined_bytes[grid_size:]
+    logic_bytes_size = grid_size
+    cell_state_bytes_size = grid_size
 
-    # Convert bytes back to NumPy arrays, ensure they are writable
-    logic_grid = np.frombuffer(logic_bytes, dtype=np.int32).reshape(grid_shape).copy()  # Make writable
-    cell_state_grid = np.frombuffer(cell_state_bytes, dtype=np.int32).reshape(grid_shape).copy()  # Make writable
+    total_bytes_needed = logic_bytes_size + cell_state_bytes_size
 
-    return logic_grid, cell_state_grid
+    if len(combined_bytes) >= total_bytes_needed:
+        # Extract bytes
+        logic_bytes = combined_bytes[:logic_bytes_size]
+        cell_state_bytes = combined_bytes[logic_bytes_size:logic_bytes_size + cell_state_bytes_size]
+        logic_inventory_bytes = combined_bytes[logic_bytes_size + cell_state_bytes_size:]
+
+        # Convert bytes back to NumPy arrays
+        logic_grid = np.frombuffer(logic_bytes, dtype=np.int32).reshape(grid_shape).copy()
+        cell_state_grid = np.frombuffer(cell_state_bytes, dtype=np.int32).reshape(grid_shape).copy()
+
+        # Recover logic_inventory if available
+        num_rulesets = len(RULESET_IDS)
+        expected_logic_inventory_size = num_rulesets * np.dtype(np.int32).itemsize
+        if len(logic_inventory_bytes) >= expected_logic_inventory_size:
+            logic_counts_array = np.frombuffer(logic_inventory_bytes[:expected_logic_inventory_size], dtype=np.int32)
+            logic_ids = sorted(RULESET_IDS.values())
+            logic_inventory = {logic_id: count for logic_id, count in zip(logic_ids, logic_counts_array)}
+        else:
+            # Logic inventory data not present, set to default
+            logic_inventory = {ruleset_id: 0 for ruleset_id in RULESET_IDS.values()}
+            total_cells = grid_shape[0] * grid_shape[1]
+            logic_inventory[RULESET_IDS["Conway"]] = total_cells  # Start with Conway blocks
+            # Include Void logic as infinite
+            logic_inventory[RULESET_IDS["Void"]] = total_cells
+
+    else:
+        raise ValueError("Invalid key: not enough data")
+
+    return logic_grid, cell_state_grid, logic_inventory
 
 # Define available rulesets
 RULESETS = {
@@ -79,14 +145,16 @@ RULESETS = {
 RULESET_IDS = {name: idx for idx, name in enumerate(RULESETS.keys())}
 ID_RULESETS = {idx: name for name, idx in RULESET_IDS.items()}
 
-# Define primary colors in RGB space
+# Define primary colors in RGB space, adding white and orange
 PRIMARY_COLORS = [
-    (255, 0, 0),   # Red
-    (0, 255, 0),   # Green
-    (0, 0, 255),   # Blue
-    (255, 255, 0), # Yellow
-    (0, 255, 255), # Cyan
-    (255, 0, 255)  # Magenta
+    (255, 0, 0),     # Red
+    (0, 255, 0),     # Green
+    (0, 0, 255),     # Blue
+    (255, 255, 0),   # Yellow
+    (0, 255, 255),   # Cyan
+    (255, 0, 255),   # Magenta
+    (255, 165, 0),   # Orange
+    (255, 255, 255)  # White
 ]
 
 def color_distance(c1, c2):
@@ -104,44 +172,50 @@ def restructure_colors(colors_list):
 class Factory_View:
     def __init__(
         self,
-        grid_size=(50, 100),
-        cell_size=16,
-        margin=1,
-        n_colors=255,
+        grid_size=(32, 64),
+        cell_size=32,
+        margin=2,
+        n_colors=64,
         window_title="Factory View",
-        fullscreen=False,
-        fps_drawing=240,  # FPS for rendering the screen
-        fps_simulation=240  # FPS for simulation updates
+        fullscreen=False, # True is buggy, scaling and text alignment issues
+        fps_drawing=60,  # FPS for rendering the screen
+        fps_simulation=60  # FPS for simulation updates
     ):
+        
+        # Grid settings
+        self.grid_size = grid_size
+        self.cell_size = cell_size
+        self.margin = margin
+        
         # Initialize Pygame
         pygame.init()
         self.fullscreen = fullscreen
         if fullscreen:
             self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
             display_width, display_height = self.screen.get_size()
-            
-            # Calculate the maximum square size that fits within the screen
-            max_display_size = min(display_width, display_height)
-            
-            # Compute the new cell size to maintain the square ratio
-            self.cell_size = (max_display_size - margin) // max(grid_size)
 
-            # Update the screen width and height for square grid centered alignment
-            self.width = self.height = self.cell_size * max(grid_size) + margin * (max(grid_size) + 1)
-            
-            # Create a smaller surface to draw the grid and then center it
+            # Ensure the aspect ratio is maintained based on the grid size
+            aspect_ratio = self.grid_size[1] / self.grid_size[0]  # width/height
+            if display_width / display_height > aspect_ratio:
+                # Limit by height
+                self.cell_size = (display_height - margin) // self.grid_size[0]
+            else:
+                # Limit by width
+                self.cell_size = (display_width - margin) // self.grid_size[1]
+
+            # Calculate actual grid width and height
+            self.width = self.cell_size * self.grid_size[1] + margin * (self.grid_size[1] + 1)
+            self.height = self.cell_size * self.grid_size[0] + margin * (self.grid_size[0] + 1) + 30  # Extra space for UI
+
+            # Create a surface for the grid and center it
             self.grid_surface = pygame.Surface((self.width, self.height))
         else:
+            # Non-fullscreen logic remains unchanged
             self.width = grid_size[1] * (cell_size + margin) + margin
             self.height = grid_size[0] * (cell_size + margin) + margin + 30  # Extra space for UI
             self.screen = pygame.display.set_mode((self.width, self.height))
 
         pygame.display.set_caption(window_title)
-        
-        # Grid settings
-        self.grid_size = grid_size
-        self.cell_size = cell_size
-        self.margin = margin
         
         # Simulation and drawing FPS control
         self.fps_drawing = fps_drawing
@@ -150,24 +224,46 @@ class Factory_View:
         self.simulation_interval = 1.0 / self.fps_simulation  # Time between each simulation update
         
         # Generate colors (from proof of concept code)
+        # Adjust n_colors to account for black and white
+        self.n_colors = n_colors
         self.colors_list = [
             tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, 1, 1))
-            for h in np.linspace(0, 1, n_colors, endpoint=False)
+            for h in np.linspace(0, 1, self.n_colors - 3, endpoint=False)
         ]
-        self.colors_list.append((0, 0, 0))  # Black color for dead cells
+        # Append black, white, and dead cell color
+        self.colors_list.append((0, 0, 0))          # Black color
+        self.colors_list.append((255, 255, 255))    # White color
+        self.dead_cell_color = (25, 25, 25)         # Dead cell color
+        self.colors_list.append(self.dead_cell_color)
+
+        # Set indices
+        self.black_index = len(self.colors_list) - 3
+        self.white_index = len(self.colors_list) - 2
+        self.dead_cell_index = len(self.colors_list) - 1
 
         # Restructure the colors list by proximity to primary colors
         restructured_colors_list = restructure_colors(self.colors_list)
 
-        # Convert to numpy array again if needed
+        # Convert to numpy array
         self.colors_array = np.array(restructured_colors_list, dtype=np.uint8)
-        self.black_index = len(self.colors_list) - 1  # Index of the black color (unchanged)
 
         # Generate logic colors for better differentiation
-        self.logic_colors_list = [
-            tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, 1, 1))
-            for h in np.linspace(0, 1, len(RULESETS), endpoint=False)
-        ]
+        # Map logic IDs to colors
+        self.logic_colors_list = {}
+        logic_names = [name for name in RULESETS.keys() if name != 'Void']
+        logic_ids = [RULESET_IDS[name] for name in logic_names]
+
+        for idx, logic_name in enumerate(logic_names):
+            logic_id = RULESET_IDS[logic_name]
+            color = PRIMARY_COLORS[idx]
+            self.logic_colors_list[logic_id] = color
+
+        # Assign dark grey color to 'Void' logic
+        void_logic_id = RULESET_IDS['Void']
+        self.logic_colors_list[void_logic_id] = (50, 50, 50)  # Slightly dark grey
+
+        # Map logic IDs to primary color indices
+        self.logic_id_to_color_index = {logic_id: idx for idx, logic_id in enumerate(logic_ids)}
 
         # Color selection for simulation mode
         self.selected_color_index = 0  # Start with the first color
@@ -183,12 +279,32 @@ class Factory_View:
         self.preprocess_rulesets()
 
         # Modes
-        self.mode = 'building'  # Modes: 'building', 'simulation', 'menu'
+        self.mode = 'building'  # Modes: 'building', 'simulation', 'menu', 'buy_menu'
         self.paused = True
         
         # Other settings
         self.clock = pygame.time.Clock()
         self.done = False
+        self.bonus = 0  # Player's energy or bonus points
+        
+        # Initialize player's logic block inventory
+        self.logic_inventory = {ruleset_id: 0 for ruleset_id in RULESET_IDS.values()}
+        # Infinite logic IDs (Conway and Void)
+        self.infinite_logic_ids = {RULESET_IDS["Conway"], RULESET_IDS["Void"]}
+        # Initialize Conway and Void with some value (infinite)
+        total_cells = self.grid_size[0] * self.grid_size[1]
+        self.logic_inventory[RULESET_IDS["Conway"]] = total_cells  # Start with Conway blocks
+        self.logic_inventory[RULESET_IDS["Void"]] = total_cells  # Infinite Void blocks
+
+        # Initialize prices for logic types
+        self.logic_prices = {}
+        available_logic_names = [name for name in RULESETS.keys() if name not in ('Void', 'Conway')]
+        base_price = 1e1
+
+        for idx, logic_name in enumerate(available_logic_names):
+            price = int(base_price * (10 ** idx) + 0.5)
+            logic_id = RULESET_IDS[logic_name]
+            self.logic_prices[logic_id] = price
 
         # Neighbor offsets for simulation
         self.neighbor_offsets = np.array([
@@ -208,6 +324,16 @@ class Factory_View:
             self.clipboard_available = False
             print("pyperclip module not found. Copy to clipboard will not work.")
 
+        # Additions for tallying colors and energy
+        self.tally_frequency = 24  # Class variable to control tally frequency
+        self.frame_counter = 0
+        self.color_counts = np.zeros(len(PRIMARY_COLORS), dtype=int)
+        self.energy = 0
+
+        # For energy generation rate
+        self.energy_generated_last = 0
+        self.energy_generation_rate = 0.0
+        self.energy_generation_timer = 0.0
 
     def preprocess_rulesets(self):
         """Preprocess rulesets into Numba-compatible arrays."""
@@ -242,6 +368,35 @@ class Factory_View:
             # Draw the current state
             self.draw()
             pygame.display.update()
+            
+    def cycle_ruleset(self, forward=True):
+        """Cycle through only the rulesets you have blocks for."""
+        # Get the list of available rulesets with non-zero blocks or infinite logic
+        available_rulesets = [name for name, id in RULESET_IDS.items()
+                              if self.logic_inventory[id] > 0 or id in self.infinite_logic_ids]
+
+        # If there are no available rulesets, do nothing
+        if not available_rulesets:
+            return
+
+        # If the current selected ruleset is not in the available list, reset to the first available one
+        if self.selected_ruleset_name not in available_rulesets:
+            self.selected_ruleset_name = available_rulesets[0]
+            self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
+            return
+
+        # Find the current ruleset index
+        current_index = available_rulesets.index(self.selected_ruleset_name)
+
+        # Move forward or backward in the list
+        if forward:
+            new_index = (current_index + 1) % len(available_rulesets)
+        else:
+            new_index = (current_index - 1) % len(available_rulesets)
+
+        # Update the selected ruleset
+        self.selected_ruleset_name = available_rulesets[new_index]
+        self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
 
     def handle_events(self):
         """Handle user input events."""
@@ -252,12 +407,14 @@ class Factory_View:
                 exit()
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                if self.mode != 'menu':
+                if self.mode == 'menu':
+                    self.mode = self.previous_mode
+                elif self.mode == 'buy_menu':
+                    self.mode = 'building'
+                else:
                     self.previous_mode = self.mode
                     self.mode = 'menu'
                     self.paused = True
-                else:
-                    self.mode = self.previous_mode
 
             if self.mode == 'menu':
                 if event.type == pygame.MOUSEBUTTONDOWN:
@@ -265,7 +422,7 @@ class Factory_View:
                         mouse_pos = pygame.mouse.get_pos()
                         # Copy button
                         if self.copy_button_rect.collidepoint(mouse_pos):
-                            key = serialize_state(self.logic_grid, self.cell_state_grid)
+                            key = serialize_state(self.logic_grid, self.cell_state_grid, self.logic_inventory)
                             if self.clipboard_available:
                                 pyperclip.copy(key)
                                 print("Seed copied to clipboard.")
@@ -277,16 +434,34 @@ class Factory_View:
                                 try:
                                     clipboard_content = pyperclip.paste()
                                     try:
-                                        self.logic_grid, self.cell_state_grid = deserialize_state(clipboard_content, self.grid_size)
+                                        self.logic_grid, self.cell_state_grid, self.logic_inventory = deserialize_state(clipboard_content, self.grid_size)
                                         print("Seed loaded from clipboard.")
                                     except Exception as e:
-                                        print(f"Error loading seed: {e}. Using clipboard content as seed.")
-                                        # Use the clipboard content as a deterministic seed
-                                        self.generate_state_from_seed(clipboard_content)
+                                        print(f"Error loading seed: {e}")
+                                        if clipboard_content.lower() == 'godmode':
+                                            self.generate_state_from_seed(clipboard_content)
+                                        else:
+                                            print("Invalid seed. Cannot load game state.")
                                 except Exception as e:
                                     print(f"Error accessing clipboard: {e}")
                             else:
                                 print("Clipboard not available.")
+            elif self.mode == 'buy_menu':
+                if event.type == pygame.KEYDOWN and event.key in (pygame.K_b, pygame.K_ESCAPE):
+                    self.mode = 'building'
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mouse_pos = pygame.mouse.get_pos()
+                    for button_rect, logic_id, quantity in self.buy_buttons:
+                        if button_rect.collidepoint(mouse_pos):
+                            price_per_block = self.logic_prices[logic_id]
+                            total_cost = price_per_block * quantity  # Buying quantity blocks
+                            if self.bonus >= total_cost:
+                                self.bonus -= total_cost
+                                self.logic_inventory[logic_id] += quantity
+                                print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]}")
+                            else:
+                                print("Not enough energy to purchase.")
+                            break
             else:
                 # Handle events in other modes
                 if event.type == pygame.KEYDOWN:
@@ -296,26 +471,21 @@ class Factory_View:
                         self.paused = not self.paused
                     elif event.key == pygame.K_d:
                         if self.mode == 'building':
-                            ruleset_names = list(RULESETS.keys())
-                            idx = ruleset_names.index(self.selected_ruleset_name)
-                            idx = (idx + 1) % len(ruleset_names)
-                            self.selected_ruleset_name = ruleset_names[idx]
-                            self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
+                            self.cycle_ruleset(forward=True)
                         elif self.mode == 'simulation':
                             self.selected_color_index = (self.selected_color_index + 1) % (len(self.colors_list) - 1)
                     elif event.key == pygame.K_a:
                         if self.mode == 'building':
-                            ruleset_names = list(RULESETS.keys())
-                            idx = ruleset_names.index(self.selected_ruleset_name)
-                            idx = (idx - 1) % len(ruleset_names)
-                            self.selected_ruleset_name = ruleset_names[idx]
-                            self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
+                            self.cycle_ruleset(forward=False)
                         elif self.mode == 'simulation':
                             self.selected_color_index = (self.selected_color_index - 1) % (len(self.colors_list) - 1)
                     elif event.key == pygame.K_f:
                         self.handle_flood_fill()
                     elif event.key == pygame.K_r:
                         self.reset_game()
+                    elif event.key == pygame.K_b:
+                        self.mode = 'buy_menu'
+
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button <= 3:
                         self.mouse_buttons[event.button - 1] = True
@@ -330,8 +500,14 @@ class Factory_View:
     def reset_game(self):
         """Reset the game grid based on the current mode."""
         if self.mode == 'building':
-            # Only reset the logic grid for the building mode
+            # Refund logic blocks before resetting
+            unique_logic_ids, counts = np.unique(self.logic_grid, return_counts=True)
+            for logic_id, count in zip(unique_logic_ids, counts):
+                if logic_id != 0 and logic_id not in self.infinite_logic_ids:
+                    self.logic_inventory[logic_id] += count
+            # Now reset the logic grid
             self.initialize_logic_grid()
+            # Do not reset the player's inventory
             self.selected_ruleset_name = "Conway"  # Reset the selected ruleset to the default
             self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
         elif self.mode == 'simulation':
@@ -342,14 +518,25 @@ class Factory_View:
     def handle_flood_fill(self):
         """Handle flood fill action based on mode."""
         pos = pygame.mouse.get_pos()
-        col = pos[0] // (self.cell_size + self.margin)
-        row = (pos[1] - 30) // (self.cell_size + self.margin)  # Adjust for UI height
+        if self.fullscreen:
+            # Calculate grid surface position offset (since it's centered)
+            grid_x_offset = (self.screen.get_width() - self.grid_surface.get_width()) // 2
+            grid_y_offset = (self.screen.get_height() - self.grid_surface.get_height()) // 2
+
+            # Adjust the mouse position to be relative to the grid surface
+            adjusted_x = pos[0] - grid_x_offset
+            adjusted_y = pos[1] - grid_y_offset - 30  # Adjust for UI height if needed
+
+            col = adjusted_x // (self.cell_size + self.margin)
+            row = adjusted_y // (self.cell_size + self.margin)
+        else:
+            col = pos[0] // (self.cell_size + self.margin)
+            row = (pos[1] - 30) // (self.cell_size + self.margin)  # Adjust for UI height
 
         if 0 <= row < self.grid_size[0] and 0 <= col < self.grid_size[1]:
             if self.mode == 'building':
                 target_logic = self.logic_grid[row, col]
-                if target_logic != -1:  # Only flood fill cells with assigned logic
-                    self.flood_fill_logic(row, col, target_logic)
+                self.flood_fill_logic(row, col, target_logic)
             elif self.mode == 'simulation':
                 target_color = self.cell_state_grid[row, col]
                 self.flood_fill_color(row, col, target_color)
@@ -367,33 +554,50 @@ class Factory_View:
     def initialize_cell_state_grid(self):
         """Initialize only the cell state grid."""
         rows, cols = self.grid_size
-        self.cell_state_grid = np.full((rows, cols), self.black_index, dtype=np.int32).copy()  # Ensure writable
+        self.cell_state_grid = np.full((rows, cols), self.dead_cell_index, dtype=np.int32).copy()  # Ensure writable
 
     def flood_fill_logic(self, row, col, target_logic):
         """Flood fill logic for adjacent cells, including logicless cells (Void, 0)."""
-        
+
+        # Prevent flood-filling with Void logic over Void cells
+        if self.selected_ruleset_id == RULESET_IDS["Void"] and self.logic_grid[row, col] == RULESET_IDS["Void"]:
+            print("Cannot flood-fill with Void logic over Void cells.")
+            return
+
         # If the selected cell is already the same ruleset, return
         if self.logic_grid[row, col] == self.selected_ruleset_id:
             return
 
         # The stack holds cells to be filled
         stack = [(row, col)]
-        
+
         # This is the value of the block where the fill starts (can be Void or a valid ruleset)
         initial_value = self.logic_grid[row, col]
 
         while stack:
             r, c = stack.pop()
             if 0 <= r < self.grid_size[0] and 0 <= c < self.grid_size[1]:
-                # Allow filling either cells with the initial value or cells that are Void (0)
-                if self.logic_grid[r, c] == initial_value or self.logic_grid[r, c] == 0:
-                    self.logic_grid[r, c] = self.selected_ruleset_id  # Apply selected ruleset
-                    neighbors = [(r+1, c), (r-1, c), (r, c+1), (r, c-1)]
-                    for nr, nc in neighbors:
-                        if 0 <= nr < self.grid_size[0] and 0 <= nc < self.grid_size[1]:
-                            if self.logic_grid[nr, nc] == initial_value or self.logic_grid[nr, nc] == 0:
-                                stack.append((nr, nc))
-                      
+                # Only fill cells that have the initial value
+                if self.logic_grid[r, c] == initial_value:
+                    # Check if player has blocks of the selected logic type or if it's infinite
+                    if self.logic_inventory.get(self.selected_ruleset_id, 0) > 0 or self.selected_ruleset_id in self.infinite_logic_ids:
+                        # Refund the old logic block if it's not Void and not infinite
+                        old_logic_id = self.logic_grid[r, c]
+                        if old_logic_id != RULESET_IDS["Void"] and old_logic_id not in self.infinite_logic_ids:
+                            self.logic_inventory[old_logic_id] += 1
+                        self.logic_grid[r, c] = self.selected_ruleset_id  # Apply selected ruleset
+                        # Decrease inventory if not infinite
+                        if self.selected_ruleset_id not in self.infinite_logic_ids:
+                            self.logic_inventory[self.selected_ruleset_id] -= 1
+                        neighbors = [(r+1, c), (r-1, c), (r, c+1), (r, c-1)]
+                        for nr, nc in neighbors:
+                            if 0 <= nr < self.grid_size[0] and 0 <= nc < self.grid_size[1]:
+                                if self.logic_grid[nr, nc] == initial_value:
+                                    stack.append((nr, nc))
+                    else:
+                        print("Not enough blocks of this logic type.")
+                        return
+
     def flood_fill_color(self, row, col, target_color):
         """Flood fill color for adjacent cells."""
         if self.cell_state_grid[row, col] == self.selected_color_index:
@@ -417,34 +621,119 @@ class Factory_View:
     def handle_mouse_event(self):
         """Handle mouse interactions."""
         pos = pygame.mouse.get_pos()
-        col = pos[0] // (self.cell_size + self.margin)
-        row = (pos[1] - 30) // (self.cell_size + self.margin)  # Adjust for UI height
+
+        # Adjust for fullscreen mode if necessary
+        if self.fullscreen:
+            # Calculate grid surface position offset (since it's centered)
+            grid_x_offset = (self.screen.get_width() - self.grid_surface.get_width()) // 2
+            grid_y_offset = (self.screen.get_height() - self.grid_surface.get_height()) // 2
+
+            # Adjust the mouse position to be relative to the grid surface
+            adjusted_x = pos[0] - grid_x_offset
+            adjusted_y = pos[1] - grid_y_offset - 30  # Adjust for UI height if needed
+
+            # Only proceed if the mouse is within the grid surface
+            if 0 <= adjusted_x < self.grid_surface.get_width() and 0 <= adjusted_y < self.grid_surface.get_height():
+                col = adjusted_x // (self.cell_size + self.margin)
+                row = adjusted_y // (self.cell_size + self.margin)
+            else:
+                return  # Ignore clicks outside the grid surface
+        else:
+            # For non-fullscreen mode, no adjustment needed
+            col = pos[0] // (self.cell_size + self.margin)
+            row = (pos[1] - 30) // (self.cell_size + self.margin)  # Adjust for UI height
+
+        # Handle painting in the grid based on the current mode
         if 0 <= row < self.grid_size[0] and 0 <= col < self.grid_size[1]:
             if self.mode == 'building':
                 if self.mouse_buttons[0]:  # Left click to assign logic
-                    self.logic_grid[row, col] = self.selected_ruleset_id
+                    if self.logic_inventory.get(self.selected_ruleset_id, 0) > 0 or self.selected_ruleset_id in self.infinite_logic_ids:
+                        old_logic_id = self.logic_grid[row, col]
+                        if old_logic_id != self.selected_ruleset_id:
+                            # Refund the old logic block if it's not Void and not infinite
+                            if old_logic_id != 0 and old_logic_id not in self.infinite_logic_ids:
+                                self.logic_inventory[old_logic_id] += 1
+                            self.logic_grid[row, col] = self.selected_ruleset_id
+                            if self.selected_ruleset_id not in self.infinite_logic_ids:
+                                self.logic_inventory[self.selected_ruleset_id] -= 1
+                    else:
+                        print("Not enough blocks of this logic type.")
                 elif self.mouse_buttons[2]:  # Right click to erase logic (set to Void state)
-                    self.logic_grid[row, col] = 0  # Set back to Void logic
-            elif self.mode == 'simulation':
+                    old_logic_id = self.logic_grid[row, col]
+                    if old_logic_id != 0 and old_logic_id not in self.infinite_logic_ids:
+                        self.logic_inventory[old_logic_id] += 1
+                    self.logic_grid[row, col] = RULESET_IDS["Void"]  # Set back to Void logic
+            if self.mode == 'simulation':
                 if self.mouse_buttons[0]:  # Left click to paint living cells
                     self.cell_state_grid[row, col] = self.selected_color_index
                 elif self.mouse_buttons[2]:  # Right click to erase cells
-                    self.cell_state_grid[row, col] = self.black_index
+                    self.cell_state_grid[row, col] = self.dead_cell_index
 
     def update(self):
         """Update the simulation."""
         if self.mode == 'simulation' and not self.paused:
-            self.cell_state_grid = update_cells(
+            self.cell_state_grid, births_count = update_cells(
                 self.cell_state_grid,
                 self.logic_grid,
                 self.birth_rules_array,
                 self.survival_rules_array,
                 self.rule_lengths,
-                self.black_index,
+                self.dead_cell_index,
                 self.neighbor_offsets,
                 self.colors_array
             )
-            
+
+            # Increment frame counter
+            self.frame_counter += 1
+
+            # Accumulate births for energy generation
+            self.energy_generated_last += births_count
+
+            # Tally colors every 'tally_frequency' frames
+            if self.frame_counter % self.tally_frequency == 0:
+                self.tally_colors()  # Keep for color_counts and total living cells
+                self.bonus += self.energy_generated_last  # Update bonus energy based on births
+
+                # Additional bonus based on color prevalence
+                for logic_id in self.logic_inventory.keys():
+                    if logic_id in self.logic_id_to_color_index:
+                        color_idx = self.logic_id_to_color_index[logic_id]
+                        color_count = self.color_counts[color_idx]
+                        bonus_for_logic = color_count // 100  # Example bonus calculation
+                        self.bonus += bonus_for_logic
+
+                self.energy_generation_timer += self.simulation_interval * self.tally_frequency
+
+                if self.energy_generation_timer >= 1.0:
+                    # Calculate energy generation rate
+                    self.energy_generation_rate = self.energy_generated_last / self.energy_generation_timer
+                    # Reset counters
+                    self.energy_generated_last = 0
+                    self.energy_generation_timer = 0.0
+     
+    def tally_colors(self):
+        """Tally the living cells and their colors closest to primary colors."""
+        self.color_counts = np.zeros(len(PRIMARY_COLORS), dtype=int)
+        self.energy = 0  # Count of living cells
+
+        rows, cols = self.cell_state_grid.shape
+        for i in range(rows):
+            for j in range(cols):
+                color_index = self.cell_state_grid[i, j]
+                if color_index != self.dead_cell_index:
+                    self.energy += 1  # Count living cell
+                    cell_color = self.colors_array[color_index]
+                    # Find the closest primary color
+                    min_distance = float('inf')
+                    closest_primary_idx = -1
+                    for idx, primary_color in enumerate(PRIMARY_COLORS):
+                        distance = color_distance(cell_color, primary_color)
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_primary_idx = idx
+                    if closest_primary_idx != -1:
+                        self.color_counts[closest_primary_idx] += 1
+
     def draw_menu(self):
         # Draw semi-transparent overlay
         overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
@@ -460,7 +749,7 @@ class Factory_View:
         pygame.draw.rect(self.screen, (50, 50, 50), popup_rect)
 
         # Copy button centered
-        font = pygame.font.Font(None, 24)
+        font = pygame.font.Font(None, 28)
         copy_button = pygame.Rect(box_x + box_width // 4 - 30, box_y + 60, 60, 30)
         pygame.draw.rect(self.screen, (70, 70, 70), copy_button)
         copy_text = font.render('Copy', True, (255, 255, 255))
@@ -482,7 +771,74 @@ class Factory_View:
         instruction_text = font.render('Use Copy to copy the seed and Paste to load it.', True, (255, 255, 255))
         instruction_rect = instruction_text.get_rect(center=(self.width // 2, box_y + 120))
         self.screen.blit(instruction_text, instruction_rect)
-        
+            
+    def draw_buy_menu(self):
+        # Draw semi-transparent overlay
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))  # Semi-transparent black
+        self.screen.blit(overlay, (0, 0))
+
+        # Font
+        font = pygame.font.Font(None, 28)
+
+        # Calculate the width of each column based on screen width
+        left_column_x = self.width * 0.1  # Logic names (left aligned)
+        center_column_x = self.width * 0.5  # Prices (center aligned)
+        right_column_x = self.width * 0.9  # Buy buttons (right aligned)
+
+        # Define padding between elements
+        row_height = 40
+        box_width = self.width * 0.8  # Width of the popup box
+        box_height = 50 + row_height * len(self.logic_prices)  # Height based on number of logic types
+        box_x = (self.width - box_width) // 2
+        box_y = (self.height - box_height) // 2
+        popup_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+        pygame.draw.rect(self.screen, (50, 50, 50), popup_rect)
+
+        # Draw the player's current balance at the top
+        balance_text = font.render(f"Current Energy: {self.bonus}", True, (255, 255, 255))
+        balance_rect = balance_text.get_rect(center=(self.width // 2, box_y + 20))
+        self.screen.blit(balance_text, balance_rect)
+
+        # List the logic types with prices and buy buttons
+        y_offset = box_y + 60
+        self.buy_buttons = []  # Store the rects of buy buttons for click detection
+
+        for logic_id in sorted(self.logic_prices.keys()):
+            logic_name = ID_RULESETS[logic_id]
+            price_per_block = self.logic_prices[logic_id]
+
+            # Logic Name (left aligned)
+            logic_text = font.render(logic_name, True, (255, 255, 255))
+            self.screen.blit(logic_text, (left_column_x, y_offset))
+
+            # Price (center aligned)
+            price_string = f"{price_per_block:.1e}"  # Format the price as 1e1, etc.
+            price_text = font.render(f"Price per block: {price_string}", True, (255, 255, 255))
+            price_text_rect = price_text.get_rect(center=(center_column_x, y_offset + 10))  # Center align
+            self.screen.blit(price_text, price_text_rect)
+
+            # Buy 1 button (right aligned)
+            buy1_button_rect = pygame.Rect(right_column_x - 190, y_offset - 5, 80, 30)
+            pygame.draw.rect(self.screen, (70, 70, 70), buy1_button_rect)
+            buy1_text = font.render('Buy 1', True, (255, 255, 255))
+            buy1_text_rect = buy1_text.get_rect(center=buy1_button_rect.center)
+            self.screen.blit(buy1_text, buy1_text_rect)
+
+            # Buy 10 button (right aligned, to the right of Buy 1)
+            buy10_button_rect = pygame.Rect(right_column_x - 100, y_offset - 5, 80, 30)
+            pygame.draw.rect(self.screen, (70, 70, 70), buy10_button_rect)
+            buy10_text = font.render('Buy 10', True, (255, 255, 255))
+            buy10_text_rect = buy10_text.get_rect(center=buy10_button_rect.center)
+            self.screen.blit(buy10_text, buy10_text_rect)
+
+            # Store the rects and logic_id for click detection
+            self.buy_buttons.append((buy1_button_rect, logic_id, 1))
+            self.buy_buttons.append((buy10_button_rect, logic_id, 10))
+
+            # Adjust y_offset for next row
+            y_offset += row_height
+
     def draw(self):
         """Draw the grid and UI elements."""
         self.screen.fill((0, 0, 0))  # Clear screen
@@ -491,6 +847,9 @@ class Factory_View:
             # Draw the game in the background
             self.draw_game()
             self.draw_menu()
+        elif self.mode == 'buy_menu':
+            self.draw_game()
+            self.draw_buy_menu()
         else:
             self.draw_game()
 
@@ -503,13 +862,10 @@ class Factory_View:
             for row in range(self.grid_size[0]):
                 for col in range(self.grid_size[1]):
                     x = col * (self.cell_size + self.margin) + self.margin
-                    y = row * (self.cell_size + self.margin) + self.margin
+                    y = row * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
                     if self.mode == 'building':
                         ruleset_id = self.logic_grid[row, col]
-                        if ruleset_id == 0:  # Handle Void (empty logic)
-                            color = (50, 50, 50)  # Dark gray for Void state
-                        else:
-                            color = self.logic_colors_list[ruleset_id]
+                        color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))
                     else:
                         color_index = self.cell_state_grid[row, col]
                         color = self.colors_array[color_index]
@@ -531,10 +887,7 @@ class Factory_View:
                     y = row * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
                     if self.mode == 'building':
                         ruleset_id = self.logic_grid[row, col]
-                        if ruleset_id == 0:  # Handle Void (empty logic)
-                            color = (50, 50, 50)  # Dark gray for Void state
-                        else:
-                            color = self.logic_colors_list[ruleset_id]
+                        color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))
                     else:
                         color_index = self.cell_state_grid[row, col]
                         color = self.colors_array[color_index]
@@ -545,25 +898,108 @@ class Factory_View:
                     )
 
         # Draw UI elements (adjust positioning as needed)
-        font = pygame.font.SysFont(None, 24)
-        mode_text = font.render(f"Mode: {self.mode.capitalize()}", True, (255, 255, 255))
-        self.screen.blit(mode_text, (10, 5))
+        font = pygame.font.SysFont(None, 28)
+        mode_text_surface = render_text_with_outline(f"Mode: {self.mode.capitalize()}", font, (255, 255, 255), (0, 0, 0))
+        self.screen.blit(mode_text_surface, (10, 5))
 
         if self.mode == 'building':
-            ruleset_text = font.render(f"Selected Ruleset: {self.selected_ruleset_name}", True, (255, 255, 255))
-            self.screen.blit(ruleset_text, (200, 5))
-            instructions = font.render("Tab: Switch Mode | A and D: Change Ruleset | R: Reset", True, (255, 255, 255))
+            ruleset_text_surface = render_text_with_outline(f"Selected Ruleset: {self.selected_ruleset_name}", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(ruleset_text_surface, (200, 5))
+            instructions = "Tab: Switch Mode | A and D: Change Ruleset | B: Buy | R: Reset | F: Fill Bucket"
+
+            # Display logic inventory
+            stats_font = pygame.font.SysFont(None, 28)
+            stats_texts = []
+
+            # Prepare logic IDs in the desired order
+            logic_ids_order = []
+            logic_ids_order.append(RULESET_IDS["Conway"])
+            other_logic_ids = [ruleset_id for ruleset_name, ruleset_id in RULESET_IDS.items() if ruleset_name not in ("Conway", "Void")]
+            logic_ids_order.extend(sorted(other_logic_ids))
+            logic_ids_order.append(RULESET_IDS["Void"])
+
+            # Calculate total width
+            total_width = 0
+            for logic_id in logic_ids_order:
+                logic_name = ID_RULESETS[logic_id]
+                if logic_id in self.infinite_logic_ids:
+                    count_text = "∞"
+                else:
+                    count = self.logic_inventory[logic_id]
+                    count_text = str(count)
+                text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, self.logic_colors_list.get(logic_id, (255, 255, 255)), (0, 0, 0))
+                stats_texts.append(text_surface)
+                total_width += text_surface.get_width() + 10  # Add spacing
+
+            # Start drawing from the right
+            x_position = self.width - total_width - 10  # 10 pixels padding from the right
+
+            for text_surface in stats_texts:
+                self.screen.blit(text_surface, (x_position, 5))
+                x_position += text_surface.get_width() + 10  # Move position for next text
+
         else:
             selected_color = self.colors_list[self.selected_color_index]
-            color_text = font.render(f"Selected Color: {selected_color}", True, (255, 255, 255))
-            self.screen.blit(color_text, (200, 5))
-            instructions = font.render("Tab: Switch Mode | A and D: Change Color | R: Reset  | Space: Pause", True, (255, 255, 255))
+            color_text_surface = render_text_with_outline(f"Selected Color: {selected_color}", font, (255, 255, 255), (0, 0, 0))
+            self.screen.blit(color_text_surface, (200, 5))
+            instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset  | Space: Pause | B: Buy | F: Fill Bucket"
 
-        self.screen.blit(instructions, (10, self.height - 25))
-            
+            # Additional UI for Simulation mode
+            if self.paused:
+                # Display "Let's Paint!!" centered with alternating primary colors
+                text = "Let's Paint!!"
+                font_large = pygame.font.SysFont(None, 48)
+                text_surfaces = []
+                for i, char in enumerate(text):
+                    color = PRIMARY_COLORS[i % len(PRIMARY_COLORS)]
+                    char_surface = render_text_with_outline(char, font_large, color, (0, 0, 0))
+                    text_surfaces.append(char_surface)
+                # Calculate total width
+                total_width = sum(surface.get_width() for surface in text_surfaces)
+                x = (self.width - total_width) // 2
+                y = 5  # Adjust y position if needed
+                for surface in text_surfaces:
+                    self.screen.blit(surface, (x, y))
+                    x += surface.get_width()
+            else:
+                # Display "Energy: {self.bonus} (+{self.energy_generation_rate:.1f}/s)" centered
+                bonus_text = f"Energy: {self.bonus} (+{self.energy_generation_rate:.1f}/s)"
+                bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
+                x = (self.width - bonus_surface.get_width()) // 2
+                y = 5  # Adjust y position if needed
+                self.screen.blit(bonus_surface, (x, 5))
+
+
+            # Alive and color counts aligned to the right
+            stats_font = pygame.font.SysFont(None, 28)
+            stats_texts = []
+
+            # Alive
+            alive_text = render_text_with_outline(f"Alive: {self.energy}", stats_font, (255, 255, 255), (0, 0, 0))
+            stats_texts.append(alive_text)
+
+            # Color counts
+            for idx, count in enumerate(self.color_counts):
+                color = PRIMARY_COLORS[idx]
+                count_text = render_text_with_outline(f"{count}", stats_font, color, (0, 0, 0))
+                stats_texts.append(count_text)
+
+            # Calculate total width
+            total_width = sum(text.get_width() + 10 for text in stats_texts)  # 10 pixels spacing
+            x_position = self.width - total_width - 10  # 10 pixels padding from the right
+
+            # Blit texts
+            for text in stats_texts:
+                self.screen.blit(text, (x_position, 5))
+                x_position += text.get_width() + 10  # Move position for next text
+
+        # Instructions at the bottom
+        instructions_surface = render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
+        self.screen.blit(instructions_surface, (10, self.height - 25))
+
     def handle_save(self):
         # Generate the key
-        key = serialize_state(self.logic_grid, self.cell_state_grid)
+        key = serialize_state(self.logic_grid, self.cell_state_grid, self.logic_inventory)
 
         # Create a text input box with the key
         self.save_textbox = TextInputBox(100, 300, 400, 32, text=key)
@@ -574,16 +1010,26 @@ class Factory_View:
 
     def generate_state_from_seed(self, seed_str):
         """Generate game state from any string seed."""
-        # Use hashlib to get a consistent hash from the string
-        seed_hash = hashlib.sha256(seed_str.encode('utf-8')).hexdigest()
-        # Convert hash to an integer
-        seed_int = int(seed_hash, 16) % 2**32  # Limit to 32 bits
-        # Seed the random number generator
-        np.random.seed(seed_int)
-        # Generate logic_grid and cell_state_grid
-        self.logic_grid = np.random.randint(0, len(RULESETS), size=self.grid_size, dtype=np.int32)
-        self.cell_state_grid = np.random.randint(0, len(self.colors_list)-1, size=self.grid_size, dtype=np.int32)
-        print(f"Generated game state from seed '{seed_str}'.")
+        if seed_str.lower() == 'godmode':
+            # Activate godmode
+            total_cells = self.grid_size[0] * self.grid_size[1]
+            self.logic_inventory = {ruleset_id: total_cells for ruleset_id in RULESET_IDS.values()}
+            self.logic_grid = np.full(self.grid_size, fill_value=0, dtype=np.int32)
+            self.cell_state_grid = np.full(self.grid_size, self.dead_cell_index, dtype=np.int32)
+            print("Godmode activated: All logic blocks unlocked.")
+        else:
+            # Use hashlib to get a consistent hash from the string
+            seed_hash = hashlib.sha256(seed_str.encode('utf-8')).hexdigest()
+            # Convert hash to an integer
+            seed_int = int(seed_hash, 16) % 2**32  # Limit to 32 bits
+            # Seed the random number generator
+            np.random.seed(seed_int)
+            # Generate logic_grid and cell_state_grid
+            self.logic_grid = np.random.randint(0, len(RULESETS), size=self.grid_size, dtype=np.int32)
+            self.cell_state_grid = np.random.randint(0, len(self.colors_list)-1, size=self.grid_size, dtype=np.int32)
+            # Generate random logic_inventory
+            self.logic_inventory = {ruleset_id: np.random.randint(0, total_cells) for ruleset_id in RULESET_IDS.values()}
+            print("Generated game state from seed.")
 
 class TextInputBox:
     def __init__(self, x, y, w, h, text=''):
@@ -592,7 +1038,7 @@ class TextInputBox:
         self.color_active = pygame.Color('dodgerblue2')
         self.color = self.color_inactive
         self.text = text
-        self.txt_surface = pygame.font.Font(None, 24).render(text, True, self.color)
+        self.txt_surface = pygame.font.Font(None, 28).render(text, True, self.color)
         self.active = False
 
     def handle_event(self, event):
@@ -615,7 +1061,7 @@ class TextInputBox:
                 else:
                     self.text += event.unicode
                 # Re-render the text
-                self.txt_surface = pygame.font.Font(None, 24).render(self.text, True, self.color)
+                self.txt_surface = pygame.font.Font(None, 28).render(self.text, True, self.color)
         return None
 
     def update(self):
@@ -628,35 +1074,100 @@ class TextInputBox:
         screen.blit(self.txt_surface, (self.rect.x+5, self.rect.y+5))
         # Blit the rect
         pygame.draw.rect(screen, self.color, self.rect, 2)
+        
+def render_text_with_outline(text, font, text_color, outline_color):
+    # First, render the text normally
+    text_surface = font.render(text, True, text_color)
+    # Then, create a new surface slightly larger to accommodate the outline
+    size = text_surface.get_width() + 2, text_surface.get_height() + 2
+    outline_surface = pygame.Surface(size, pygame.SRCALPHA)
+    # Draw the outline by rendering the text multiple times with offsets
+    offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
+               (0, 1), (1, -1), (1, 0), (1, 1)]
+    for dx, dy in offsets:
+        pos = (1 + dx, 1 + dy)
+        outline_surface.blit(font.render(text, True, outline_color), pos)
+    # Blit the main text onto the outline surface
+    outline_surface.blit(text_surface, (1, 1))
+    return outline_surface
 
-# Numba-optimized update function with color averaging
+@njit
+def shift_grid(grid, shift_row, shift_col):
+    """Shift the grid manually along both axes."""
+    rows, cols = grid.shape
+    result = np.zeros_like(grid)
+    
+    if shift_row > 0:
+        result[shift_row:, :] = grid[:-shift_row, :]
+    elif shift_row < 0:
+        result[:shift_row, :] = grid[-shift_row:, :]
+    else:
+        result[:, :] = grid[:, :]
+    
+    if shift_col > 0:
+        result[:, shift_col:] = result[:, :-shift_col]
+    elif shift_col < 0:
+        result[:, :shift_col] = result[:, -shift_col:]
+    
+    return result
+
+@njit
+def convolve(grid, offsets):
+    """Helper function to compute neighbor sums via manual shifting."""
+    rows, cols = grid.shape
+    neighbor_count = np.zeros((rows, cols), dtype=np.int32)
+
+    for offset in offsets:
+        neighbor_count += shift_grid(grid, offset[0], offset[1])
+
+    return neighbor_count
+
+@njit
+def compute_color_sum(grid, colors_array, offsets, black_index):
+    """Accumulate the color values for each cell's neighbors."""
+    rows, cols = grid.shape
+    color_sum = np.zeros((rows, cols, 3), dtype=np.float64)  # RGB sum for each cell
+
+    for offset in offsets:
+        shifted_grid = shift_grid(grid, offset[0], offset[1])
+        for i in range(rows):
+            for j in range(cols):
+                if shifted_grid[i, j] != black_index:  # If neighbor is alive
+                    color_sum[i, j] += colors_array[shifted_grid[i, j]]  # Accumulate color
+
+    return color_sum
+
 @njit
 def update_cells(cell_state_grid, logic_grid, birth_rules_array, survival_rules_array, rule_lengths, black_index, neighbor_offsets, colors_array):
     rows, cols = cell_state_grid.shape
     new_grid = cell_state_grid.copy()
     num_colors = colors_array.shape[0]
+    births_count = 0  # New variable to count births
+
+    # 1. Precompute neighbor counts using manual shifting
+    live_neighbor_count = convolve(cell_state_grid != black_index, neighbor_offsets)
+
+    # 2. Precompute color sums for living neighbors
+    neighbor_color_sum = compute_color_sum(cell_state_grid, colors_array, neighbor_offsets, black_index)
+
+    # 3. Iterate through each cell and apply rules
     for i in range(rows):
         for j in range(cols):
             # Get the ruleset for the current cell
             ruleset_id = logic_grid[i, j]
             if ruleset_id == -1:
                 continue  # Skip cells without logic assigned
+
             birth_rules = birth_rules_array[ruleset_id]
             survival_rules = survival_rules_array[ruleset_id]
             B_len = rule_lengths[ruleset_id, 0]
             S_len = rule_lengths[ruleset_id, 1]
-            live_neighbors = 0
-            color_sum = np.zeros(3, dtype=np.float64)
-            for offset in neighbor_offsets:
-                ni = (i + offset[0]) % rows
-                nj = (j + offset[1]) % cols
-                neighbor_index = cell_state_grid[ni, nj]
-                if neighbor_index != black_index:
-                    live_neighbors += 1
-                    neighbor_color = colors_array[neighbor_index].astype(np.float64)
-                    color_sum += neighbor_color
+
+            live_neighbors = live_neighbor_count[i, j]
             is_alive = cell_state_grid[i, j] != black_index
+
             if is_alive:
+                # Check survival condition
                 survived = False
                 for k in range(S_len):
                     if live_neighbors == survival_rules[k]:
@@ -665,38 +1176,38 @@ def update_cells(cell_state_grid, logic_grid, birth_rules_array, survival_rules_
                 if not survived:
                     new_grid[i, j] = black_index  # Cell dies
                 else:
+                    # Calculate the average color of the living neighbors
                     if live_neighbors > 0:
-                        avg_color = color_sum / live_neighbors
-                        # Find the closest color index
-                        min_diff = np.inf
-                        closest_color_index = 0
-                        for idx in range(num_colors - 1):  # Exclude black color
-                            color_diff = ((colors_array[idx].astype(np.float64) - avg_color) ** 2).sum()
-                            if color_diff < min_diff:
-                                min_diff = color_diff
-                                closest_color_index = idx
-                        new_grid[i, j] = closest_color_index
+                        avg_color = neighbor_color_sum[i, j] / live_neighbors
+                        new_grid[i, j] = find_closest_color(colors_array, avg_color, num_colors)
             else:
+                # Check birth condition
                 born = False
                 for k in range(B_len):
                     if live_neighbors == birth_rules[k]:
                         born = True
                         break
-                if born:
-                    avg_color = color_sum / live_neighbors
-                    # Find the closest color index
-                    min_diff = np.inf
-                    closest_color_index = 0
-                    for idx in range(num_colors - 1):  # Exclude black color
-                        color_diff = ((colors_array[idx].astype(np.float64) - avg_color) ** 2).sum()
-                        if color_diff < min_diff:
-                            min_diff = color_diff
-                            closest_color_index = idx
-                    new_grid[i, j] = closest_color_index
-    return new_grid
+                if born and live_neighbors > 0:
+                    avg_color = neighbor_color_sum[i, j] / live_neighbors
+                    new_grid[i, j] = find_closest_color(colors_array, avg_color, num_colors)
+                    births_count += 1  # Increment births count
+
+    return new_grid, births_count
+
+@njit
+def find_closest_color(colors_array, avg_color, num_colors):
+    """Find the closest color in the palette based on the average color."""
+    min_diff = np.inf
+    closest_color_index = 0
+
+    for idx in range(num_colors - 1):  # Exclude black color
+        color_diff = np.sum((colors_array[idx].astype(np.float64) - avg_color) ** 2)
+        if color_diff < min_diff:
+            min_diff = color_diff
+            closest_color_index = idx
+
+    return closest_color_index
 
 if __name__ == "__main__":
     app = Factory_View()
     app.run()
-
-# End of the line, partner.
