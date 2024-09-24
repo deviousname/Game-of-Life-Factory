@@ -90,7 +90,7 @@ RULESETS = {
 RULESET_IDS = {name: idx for idx, name in enumerate(RULESETS.keys())}
 ID_RULESETS = {idx: name for name, idx in RULESET_IDS.items()}
 
-# Define primary colors in RGB space, adding white and orange
+# Define primary colors in RGB space, adding pure white and black
 PRIMARY_COLORS = [
     (255, 0, 0),     # Red
     (0, 255, 0),     # Green
@@ -98,8 +98,8 @@ PRIMARY_COLORS = [
     (255, 255, 0),   # Yellow
     (0, 255, 255),   # Cyan
     (255, 0, 255),   # Magenta
-    (255, 165, 0),   # Orange
-    (255, 255, 255)  # White
+    (255, 255, 255), # White
+    (0, 0, 0)        # Black
 ]
 
 def color_distance(c1, c2):
@@ -169,21 +169,22 @@ class Factory_View:
         self.simulation_interval = 1.0 / self.fps_simulation  # Time between each simulation update
         
         # Generate colors and adjust n_colors to account for black and white
-        self.n_colors = n_colors
+        self.n_colors = n_colors - 2  # Adjust for black and white added later
         self.colors_list = [
             tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, 1, 1))
-            for h in np.linspace(0, 1, self.n_colors - 3, endpoint=False)
+            for h in np.linspace(0, 1, self.n_colors, endpoint=False)
         ]
-        # Append black, white, and dead cell color
+        # Append black and white
         self.colors_list.append((0, 0, 0))          # Black color
         self.colors_list.append((255, 255, 255))    # White color
-        self.dead_cell_color = (127, 127, 127)         # Dead cell color
+        # Append dead cell color (gray)
+        self.dead_cell_color = (127, 127, 127)      # Dead cell color
         self.colors_list.append(self.dead_cell_color)
 
         # Set indices
-        self.black_index = len(self.colors_list) - 3
-        self.white_index = len(self.colors_list) - 2
-        self.dead_cell_index = len(self.colors_list) - 1
+        self.black_index = len(self.colors_list) - 3  # Index of black color
+        self.white_index = len(self.colors_list) - 2  # Index of white color
+        self.dead_cell_index = len(self.colors_list) - 1  # Index of dead cell color
 
         # Restructure the colors list by proximity to primary colors
         restructured_colors_list = restructure_colors(self.colors_list)
@@ -345,9 +346,9 @@ class Factory_View:
         dummy_birth_rules_array = self.birth_rules_array
         dummy_survival_rules_array = self.survival_rules_array
         dummy_rule_lengths = self.rule_lengths
-        dummy_dead_cell_index = self.dead_cell_index
+        dummy_black_index = self.dead_cell_index  # Changed variable name for clarity
         dummy_neighbor_offsets = self.neighbor_offsets
-        dummy_colors_array = self.colors_array  # Add this line
+        dummy_colors_array = self.colors_array
 
         # Call update_cells() with dummy data
         update_cells(
@@ -356,11 +357,11 @@ class Factory_View:
             dummy_birth_rules_array,
             dummy_survival_rules_array,
             dummy_rule_lengths,
-            dummy_dead_cell_index,
+            dummy_black_index,  # Pass as black_index
             dummy_neighbor_offsets,
             dummy_colors_array  # Pass the colors array here
         )
-    
+
     def cycle_ruleset(self, forward=True):
         """Cycle through only the rulesets you have blocks for."""
         # Get the list of available rulesets with non-zero blocks or infinite logic
@@ -473,6 +474,7 @@ class Factory_View:
                             self.cycle_ruleset(forward=False)
                         elif self.mode == 'simulation':
                             self.selected_color_index = (self.selected_color_index - 1) % (len(self.colors_list) - 1)
+
                     elif event.key == pygame.K_f:
                         self.handle_flood_fill()
                     elif event.key == pygame.K_r:
@@ -933,12 +935,13 @@ class Factory_View:
             # Start position for the "Alive:" text
             alive_text = f"Alive: {self.energy}"
             alive_text_surface = render_text_with_outline(alive_text, font, (255, 255, 255), (0, 0, 0))
+
             color_tally_x_position = self.width - 10  # Start from the right side
 
             # Subtract space for color counters
             for idx, color in enumerate(PRIMARY_COLORS):
                 color_count = self.color_counts[idx]
-                color_text_surface = render_text_with_outline(str(color_count), font, color, (0, 0, 0))
+                color_text_surface = render_text_with_outline(str(color_count), font, color, None)  # Let outline_color be None
                 color_tally_x_position -= color_text_surface.get_width() + 10  # Move left for each color tally
                 self.screen.blit(color_text_surface, (color_tally_x_position, 5))
 
@@ -947,11 +950,11 @@ class Factory_View:
             self.screen.blit(alive_text_surface, (alive_text_x_position, 5))
             if self.paused:
                 # Display "Let's Paint!!" in colorful text when paused
-                text = "Let's Paint!!"
+                text = "PAUSED - Painting Time!"
                 text_surfaces = []
                 for i, char in enumerate(text):
                     color = PRIMARY_COLORS[i % len(PRIMARY_COLORS)]
-                    char_surface = render_text_with_outline(char, font_large, color, (0, 0, 0))
+                    char_surface = render_text_with_outline(char, font_large, color, (127, 127, 127))
                     text_surfaces.append(char_surface)
 
                 # Calculate total width of the "Let's Paint!!" text
@@ -964,7 +967,7 @@ class Factory_View:
 
             else:
                 # Display "Game of Life: Factory" in alternating colors when unpaused
-                text = "Game of Life: Factory"
+                text = "UNPAUSED - Factory Active"
                 fancy_colors = [(0, 255, 255), (255, 0, 255), (255, 255, 0)]  # Cyan, Magenta, Yellow
                 text_surfaces = []
                 for i, char in enumerate(text):
@@ -1003,20 +1006,20 @@ class Factory_View:
 
             # Display logic inventory
             stats_font = pygame.font.SysFont(None, 28)
+            # Building mode logic inventory with dynamic outline color
             x_position = self.width - 10  # 10 pixels padding from the right
-
-            # Prepare logic IDs in the desired order
+            # Prepare logic IDs in the desired order (Conway first, Void last)
             logic_ids_order = [RULESET_IDS["Conway"]] + sorted(
                 [ruleset_id for ruleset_name, ruleset_id in RULESET_IDS.items() if ruleset_name not in ("Conway", "Void")]
             ) + [RULESET_IDS["Void"]]
-
             for logic_id in reversed(logic_ids_order):
                 logic_name = ID_RULESETS[logic_id]
                 count_text = "∞" if logic_id in self.infinite_logic_ids else str(self.logic_inventory[logic_id])
-                text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, self.logic_colors_list.get(logic_id, (255, 255, 255)), (0, 0, 0))
+                logic_color = self.logic_colors_list.get(logic_id, (255, 255, 255))  # Get the color of the logic
+                text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, logic_color, None)  # Pass None for dynamic outline
                 x_position -= text_surface.get_width()
                 self.screen.blit(text_surface, (x_position, 5))
-                x_position -= 10  # Move position for next text
+                x_position -= 10  # Move position for the next text
 
         # Draw instructions at the bottom
         instructions_surface = render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
@@ -1164,7 +1167,7 @@ def compute_color_sum(grid, colors_array, offsets, black_index):
         shifted_grid = shift_grid(grid, offset[0], offset[1])
         for i in range(rows):
             for j in range(cols):
-                if shifted_grid[i, j] != black_index:  # If neighbor is alive
+                if shifted_grid[i, j] != black_index:  # Changed from dead_cell_index to black_index
                     color_sum[i, j] += colors_array[shifted_grid[i, j]]  # Accumulate color
 
     return color_sum
@@ -1177,10 +1180,10 @@ def update_cells(cell_state_grid, logic_grid, birth_rules_array, survival_rules_
     births_count = 0  # New variable to count births
 
     # 1. Precompute neighbor counts using manual shifting
-    live_neighbor_count = convolve(cell_state_grid != black_index, neighbor_offsets)
+    live_neighbor_count = convolve(cell_state_grid != black_index, neighbor_offsets)  # Changed from dead_cell_index to black_index
 
     # 2. Precompute color sums for living neighbors
-    neighbor_color_sum = compute_color_sum(cell_state_grid, colors_array, neighbor_offsets, black_index)
+    neighbor_color_sum = compute_color_sum(cell_state_grid, colors_array, neighbor_offsets, black_index)  # Changed from dead_cell_index to black_index
 
     # 3. Iterate through each cell and apply rules
     for i in range(rows):
@@ -1196,7 +1199,7 @@ def update_cells(cell_state_grid, logic_grid, birth_rules_array, survival_rules_
             S_len = rule_lengths[ruleset_id, 1]
 
             live_neighbors = live_neighbor_count[i, j]
-            is_alive = cell_state_grid[i, j] != black_index
+            is_alive = cell_state_grid[i, j] != black_index  # Changed from dead_cell_index to black_index
 
             if is_alive:
                 # Check survival condition
@@ -1206,7 +1209,7 @@ def update_cells(cell_state_grid, logic_grid, birth_rules_array, survival_rules_
                         survived = True
                         break
                 if not survived:
-                    new_grid[i, j] = black_index  # Cell dies
+                    new_grid[i, j] = black_index  # Changed from dead_cell_index to black_index
                 else:
                     # Calculate the average color of the living neighbors
                     if live_neighbors > 0:
@@ -1239,6 +1242,34 @@ def find_closest_color(colors_array, avg_color, num_colors):
             closest_color_index = idx
 
     return closest_color_index
+
+def render_text_with_outline(text, font, text_color, outline_color=None):
+    """
+    Render text with an outline. If outline_color is not provided, it will calculate a contrasting color.
+    """
+    # Calculate a contrasting outline color if not provided
+    if outline_color is None:
+        # Convert the text color to grayscale to determine brightness
+        brightness = 0.299 * text_color[0] + 0.587 * text_color[1] + 0.114 * text_color[2]
+        outline_color = (0, 0, 0) if brightness > 128 else (255, 255, 255)
+    
+    # First, render the text normally
+    text_surface = font.render(text, True, text_color)
+    
+    # Then, create a new surface slightly larger to accommodate the outline
+    size = text_surface.get_width() + 2, text_surface.get_height() + 2
+    outline_surface = pygame.Surface(size, pygame.SRCALPHA)
+    
+    # Draw the outline by rendering the text multiple times with small offsets
+    offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    for dx, dy in offsets:
+        pos = (1 + dx, 1 + dy)
+        outline_surface.blit(font.render(text, True, outline_color), pos)
+    
+    # Blit the main text onto the outline surface
+    outline_surface.blit(text_surface, (1, 1))
+    
+    return outline_surface
 
 if __name__ == "__main__":
     app = Factory_View()
