@@ -1,51 +1,71 @@
-This is currently an incremental game which the players can craft automated energy farms with. I have plans to expand
-this into a hybrid game, where the factory is a building on the overworld, the player can move a character with wasd,
-enter and exit the factory to tweak it as needed, and use their energy for things, and use their colors for stats,
-for example, having a lot of red will make you strong against fire, a lot of blue, strong against water, etc.
-More energy means more ability use. Other factories and characters will exist in the overworld to battle and learn
-factory secrets from.
+# Game Readme: Cellular Automata Factory View
 
-This module defines a comprehensive simulation framework for cellular automata within the context of factory design,
-leveraging Pygame for graphical representation and Numba for performance optimization. The system supports multiple 
-automata rulesets, dynamic color manipulation, and player interaction, offering a rich environment to visualize and 
-manipulate game states in real-time.
+## Overview
 
-### Key Features:
-1. **Serialization & Deserialization**: 
-   - Seamlessly encode and decode simulation states using compression and base64 encoding, allowing for easy sharing 
-     of game seeds or restoration of previous states.
-   
-2. **Grid-Based Automata**: 
-   - Implements cellular automata with various rulesets like Conway’s Game of Life, HighLife, and more, providing both 
-     building and simulation modes for diverse gameplay.
-   
-3. **Dynamic Color Handling**: 
-   - Generates and assigns colors to cells dynamically, while also handling color-based interactions, like tallying 
-     living cells based on their proximity to primary colors.
+This game is a dynamic cellular automaton simulation where players build, simulate, and manipulate grids of cells governed by various rulesets. It allows the player to create, simulate, and visualize how different rules influence the behavior of cells. The player can switch between building and simulation modes, modify rulesets, and manage an inventory of logic blocks that control how the cells behave.
 
-4. **Inventory & Ruleset Management**: 
-   - Enables player interaction with automata rulesets, including block-based inventory management, and cycling through 
-     available rulesets for gameplay variation.
+## Controls
 
-5. **Interactive UI**: 
-   - Includes a full-featured graphical interface for toggling between modes, purchasing logic blocks, handling grid 
-     interactions, and pausing or resetting simulations.
+### General Controls
+- **`TAB`**: Toggle between building and simulation modes.
+- **`ESC`**: Open/close the game menu or return to building mode from a submenu.
+- **`A`/`D`**: Cycle through available rulesets (building mode) or colors (simulation mode).
+- **`R`**: Reset the game grid.
+- **`F`**: Use the flood-fill tool to fill cells based on the current ruleset (building mode) or color (simulation mode).
+- **`SPACE`**: Pause or unpause the simulation.
+- **`B`**: Open the buy menu to purchase logic blocks for different rulesets using energy.
 
-6. **Clipboard Support**: 
-   - Provides functionality for copying and pasting simulation states using the clipboard, making sharing and restoring 
-     states intuitive.
+### Mouse Controls
+- **Left-click (building mode)**: Place the selected ruleset block in the grid.
+- **Right-click (building mode)**: Erase a block by setting it to "Void".
+- **Left-click (simulation mode)**: Paint living cells with the selected color.
+- **Right-click (simulation mode)**: Erase cells (set them to dead state).
 
-### Core Classes and Functions:
-- **Factory_View**: 
-   - The main class managing grid display, event handling, and simulation logic.
-   
-- **TextInputBox**: 
-   - A utility class for text input, used for saving and loading game states via seed strings.
+## Game Modes
 
-- **Serialization/Deserialization**: 
-   - Helper functions `serialize_state` and `deserialize_state` enable conversion of the game state to/from a 
-     compressed, shareable string format.
+### Building Mode
+- In building mode, you can place logic blocks from different rulesets on the grid.
+- **Rulesets** define how cells behave, whether they live, die, or are born.
+- Logic blocks are drawn from your inventory. Some blocks (like "Conway" and "Void") are infinite, but others need to be bought using energy.
+  
+### Simulation Mode
+- In this mode, cells interact according to the rulesets applied to them. Cells can live, die, or reproduce based on their surrounding neighbors.
+- You can paint cells with different colors to visualize the patterns that emerge in the simulation.
+- The simulation can be paused and resumed.
 
-### Numba Optimizations:
-- Several functions are accelerated using Numba's `njit` decorator to improve performance, especially in grid manipulations 
-  and neighbor calculations, critical for the cellular automata’s efficiency.
+### Menu Mode
+- You can open a menu by pressing `ESC` to copy the current game state to the clipboard or load a game state from the clipboard.
+
+### Buy Menu
+- Use the buy menu (press `B`) to spend energy and purchase new logic blocks.
+- Energy is generated by living cells during the simulation. The more cells, the more energy you earn.
+
+## Logic Block Inventory
+- Each logic block corresponds to a different ruleset. The rulesets dictate the survival and birth conditions for cells in the simulation.
+- **Void** blocks clear a space, while other blocks define how cells grow or die.
+- You start with an unlimited number of **Conway** and **Void** blocks, but other rulesets need to be purchased using energy.
+
+## Rulesets
+
+The game includes several different rulesets, each with its own birth (`B`) and survival (`S`) conditions:
+- **Void**: All cells die in this space.
+- **Conway**: Standard Game of Life rules where cells survive with 2-3 neighbors and are born with exactly 3.
+- **HighLife**: Similar to Conway but cells are also born with 6 neighbors.
+- **Day & Night**: A more complex set of rules that allow cells to both survive and be born under a variety of neighbor configurations.
+- **Seeds**, **Life Without Death**, **Maze**, **Gnarl**, and **Replicator**: Each has unique behavior patterns for survival and birth.
+
+## Clipboard Functionality
+
+You can copy the game state to the clipboard or load a saved state:
+- **Copy**: Copies the current grid and inventory state to the clipboard in the form of a seed string.
+- **Paste**: Loads a game state from the clipboard if a valid seed string is present.
+
+## Energy System
+
+- As cells grow and reproduce in simulation mode, they generate energy for the player.
+- Energy can be spent in the **Buy Menu** to purchase additional blocks of logic to place on the grid.
+
+## Notes
+
+- Press `ESC` to bring up the game menu to copy or paste game states.
+- The game runs in a loop, updating both the simulation and rendering processes continuously. You can pause and unpause the simulation using the `SPACE` key.
