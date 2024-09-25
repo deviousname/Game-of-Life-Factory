@@ -456,19 +456,19 @@ class Factory_View:
                         self.mode = self.previous_mode  # Return to the correct mode
                     elif event.key == pygame.K_n:
                         self.scientific_notation = not self.scientific_notation  # Toggle notation
-                    elif event.key == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        mouse_pos = pygame.mouse.get_pos()
-                        for button_rect, logic_id, quantity in self.buy_buttons:
-                            if button_rect.collidepoint(mouse_pos):
-                                price_per_block = self.logic_prices[logic_id]
-                                total_cost = price_per_block * quantity  # Buying quantity blocks
-                                if self.bonus >= total_cost:
-                                    self.bonus -= total_cost
-                                    self.logic_inventory[logic_id] += quantity
-                                    print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]}")
-                                else:
-                                    print("Not enough energy to purchase.")
-                                break
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mouse_pos = pygame.mouse.get_pos()
+                    for button_rect, logic_id, quantity in self.buy_buttons:
+                        if button_rect.collidepoint(mouse_pos):
+                            price_per_block = self.logic_prices[logic_id]
+                            total_cost = price_per_block * quantity  # Buying quantity blocks
+                            if self.bonus >= total_cost:
+                                self.bonus -= total_cost
+                                self.logic_inventory[logic_id] += quantity
+                                print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]}")
+                            else:
+                                print("Not enough energy to purchase.")
+                            break
             else:
                 # Handle events in other modes
                 if event.type == pygame.KEYDOWN:
@@ -503,6 +503,8 @@ class Factory_View:
                         else:
                             self.previous_mode = self.mode
                             self.mode = 'stats'
+                    elif event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
+                        self.undo_action()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button <= 3:
                         self.mouse_buttons[event.button - 1] = True
@@ -913,7 +915,7 @@ class Factory_View:
 
         # List the logic types with prices and buy buttons
         y_offset = box_y + 60
-        self.buy_buttons = []  # Store the rects of buy buttons for click detection
+        self.buy_buttons = []  # Clear the buy buttons list first
 
         for logic_id in sorted(self.logic_prices.keys()):
             logic_name = ID_RULESETS[logic_id]
@@ -944,10 +946,10 @@ class Factory_View:
             self.screen.blit(buy10_text, buy10_text_rect)
 
             # Store the rects and logic_id for click detection
-            self.buy_buttons.append((buy1_button_rect, logic_id, 1))
-            self.buy_buttons.append((buy10_button_rect, logic_id, 10))
+            self.buy_buttons.append((buy1_button_rect, logic_id, 1))  # Buy 1 block
+            self.buy_buttons.append((buy10_button_rect, logic_id, 10))  # Buy 10 blocks
 
-            # Adjust y_offset for next row
+            # Adjust y_offset for the next row
             y_offset += row_height
 
     def draw(self):
@@ -1095,7 +1097,7 @@ class Factory_View:
             selected_color = self.colors_list[self.selected_color_index]
             color_text_surface = render_text_with_outline(f"Selected Color: {selected_color}", font, (255, 255, 255), (0, 0, 0))
             self.screen.blit(color_text_surface, (200, 5))
-            instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset  | Space: Pause | B: Buy | F: Fill Bucket | N: Notation"
+            instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset | Space: Pause | B: Buy | F: Fill Bucket | N: Notation | I: Info (Stats)"
 
         else:
             # Building mode UI
@@ -1104,7 +1106,7 @@ class Factory_View:
             # Building mode UI
             ruleset_text_surface = render_text_with_outline(f"Selected Ruleset: {self.selected_ruleset_name}", font, (255, 255, 255), (0, 0, 0))
             self.screen.blit(ruleset_text_surface, (200, 5))
-            instructions = "Tab: Switch Mode | A and D: Change Ruleset | B: Buy | R: Reset | F: Fill Bucket | N: Notation"
+            instructions = "Tab: Switch Mode | A and D: Change Ruleset | B: Buy | R: Reset | F: Fill Bucket | N: Notation | I: Info (Stats)"
 
             # Display logic inventory
             stats_font = pygame.font.SysFont(None, 28)
@@ -1219,7 +1221,7 @@ class Factory_View:
         diversity_bonus_rect = diversity_bonus_surface.get_rect(center=(self.width // 2, y_offset))
         self.screen.blit(diversity_bonus_surface, diversity_bonus_rect)
         y_offset += 30
-
+        '''
         # Offensive and Defensive bonuses
         offense_bonus_text = f"Offensive Bonus: {self.bonus_offense * 100:.1f}%"
         defense_bonus_text = f"Defensive Bonus: {self.bonus_defense * 100:.1f}%"
@@ -1230,7 +1232,7 @@ class Factory_View:
         y_offset += 30
         defense_bonus_rect = defense_bonus_surface.get_rect(center=(self.width // 2, y_offset))
         self.screen.blit(defense_bonus_surface, defense_bonus_rect)
-        y_offset += 40
+        y_offset += 40'''
 
         # Display color counts and their contributions
         color_counts_text = "Color Counts:"
