@@ -757,9 +757,9 @@ class Factory_View:
                     self.energy_generation_timer = 0.0
 
     def save_current_state(self):
-        # Save copies of the grids
+        """Save the current state of grids and logic inventory for undo."""
         if self.mode == 'building':
-            self.logic_grid_history.append(self.logic_grid.copy())
+            self.logic_grid_history.append((self.logic_grid.copy(), self.logic_inventory.copy()))
             # Limit history size
             if len(self.logic_grid_history) > self.max_history_length:
                 self.logic_grid_history.pop(0)
@@ -770,11 +770,12 @@ class Factory_View:
                 self.cell_state_grid_history.pop(0)
 
     def undo_action(self):
+        """Undo the last action in the current mode."""
         if self.mode == 'building' and self.logic_grid_history:
-            self.logic_grid = self.logic_grid_history.pop()
+            self.logic_grid, self.logic_inventory = self.logic_grid_history.pop()
         elif self.mode == 'simulation' and self.cell_state_grid_history:
             self.cell_state_grid = self.cell_state_grid_history.pop()
-            
+
     def calculate_bonuses(self):
         """Calculate bonuses based on color diversity and cell activity."""
         # Calculate average change rate per cell
@@ -954,7 +955,7 @@ class Factory_View:
 
     def draw(self):
         """Draw the grid and UI elements."""
-        self.screen.fill((0, 0, 0))  # Clear screen
+        self.screen.fill((90, 90, 180))  # Clear screen
 
         if self.mode == 'menu':
             # Draw the game in the background
@@ -1030,28 +1031,46 @@ class Factory_View:
         # UI for simulation mode
         font = pygame.font.SysFont(None, 28)
         font_large = pygame.font.SysFont(None, 48)
-        
+
         if self.mode == 'simulation':
             # Display Mode: Simulation in the top-left corner
             mode_text_surface = render_text_with_outline(f"Mode: Simulation", font, (255, 255, 255), (0, 0, 0))
             self.screen.blit(mode_text_surface, (10, 5))
 
-            # Start position for the "Alive:" text
-            alive_text = f"Alive: {self.energy}"
+            # Calculate total living cells
+            total_living_cells = np.sum(self.color_counts)
+
+            # Alive text
+            alive_text = f"Alive: {total_living_cells} | Ratio:"
             alive_text_surface = render_text_with_outline(alive_text, font, (255, 255, 255), (0, 0, 0))
-
-            color_tally_x_position = self.width - 10  # Start from the right side
-
-            # Subtract space for color counters
-            for idx, color in enumerate(PRIMARY_COLORS):
-                color_count = self.color_counts[idx]
-                color_text_surface = render_text_with_outline(str(color_count), font, color, None)  # Let outline_color be None
-                color_tally_x_position -= color_text_surface.get_width() + 10  # Move left for each color tally
-                self.screen.blit(color_text_surface, (color_tally_x_position, 5))
-
-            # Now place the "Alive:" text to the left of the first color counter
-            alive_text_x_position = color_tally_x_position - alive_text_surface.get_width() - 10
+            alive_text_rect = alive_text_surface.get_rect()
+            
+            # Position the "Alive" text near the top-right corner
+            alive_text_x_position = self.width - alive_text_rect.width - (self.width*.1)  # 200 is arbitrary, adjust as needed
             self.screen.blit(alive_text_surface, (alive_text_x_position, 5))
+
+            # Display the color ratios
+            ratio_text = "Ratio: "  # Start with "Ratio: "
+            ratio_list = []
+
+            ratio_text += " ".join(ratio_list)  # Combine the percentages into one string
+            ratio_text_surface = render_text_with_outline(ratio_text, font, (255, 255, 255), (0, 0, 0))
+
+            # Position the ratio text right next to the "Alive" text
+            ratio_text_x_position = alive_text_x_position + alive_text_rect.width + 10  # 10px gap from Alive text
+            for idx, count in enumerate(self.color_counts):
+                # Calculate the percentage for each color
+                percentage = (count / total_living_cells * 100) if total_living_cells > 0 else 0
+                ratio_text = f"{int(percentage)}"  # Convert to int for cleaner display
+
+                # Render the text in the color it represents
+                color = PRIMARY_COLORS[idx]
+                ratio_text_surface = render_text_with_outline(ratio_text, font, color, (0, 0, 0))  # Outline color black
+
+                # Display the ratio right next to the previous one
+                self.screen.blit(ratio_text_surface, (ratio_text_x_position, 5))
+                ratio_text_x_position += ratio_text_surface.get_width() + 10  # Move right for the next ratio
+
             if self.paused:
                 # Display "Let's Paint!!" in colorful text when paused
                 text = "PAUSED - Painting Time!"
@@ -1113,12 +1132,12 @@ class Factory_View:
             # Building mode logic inventory with dynamic outline color
             x_position = self.width - 10  # 10 pixels padding from the right
             # Prepare logic IDs in the desired order (Conway first, Void last)
-            logic_ids_order = [RULESET_IDS["Conway"]] + sorted(
+            logic_ids_order = sorted(
                 [ruleset_id for ruleset_name, ruleset_id in RULESET_IDS.items() if ruleset_name not in ("Conway", "Void")]
-            ) + [RULESET_IDS["Void"]]
+            )
             for logic_id in reversed(logic_ids_order):
                 logic_name = ID_RULESETS[logic_id]
-                count_text = "∞" if logic_id in self.infinite_logic_ids else str(self.logic_inventory[logic_id])
+                count_text = str(self.logic_inventory[logic_id])
                 logic_color = self.logic_colors_list.get(logic_id, (255, 255, 255))  # Get the color of the logic
                 text_surface = render_text_with_outline(f"{logic_name}: {count_text}", stats_font, logic_color, None)  # Pass None for dynamic outline
                 x_position -= text_surface.get_width()
@@ -1324,21 +1343,15 @@ def render_text_with_outline(text, font, text_color, outline_color):
 
 @njit
 def shift_grid(grid, shift_row, shift_col):
-    """Shift the grid manually along both axes."""
+    """Shift the grid manually along both axes with toroidal wrapping."""
     rows, cols = grid.shape
     result = np.zeros_like(grid)
-    
-    if shift_row > 0:
-        result[shift_row:, :] = grid[:-shift_row, :]
-    elif shift_row < 0:
-        result[:shift_row, :] = grid[-shift_row:, :]
-    else:
-        result[:, :] = grid[:, :]
-    
-    if shift_col > 0:
-        result[:, shift_col:] = result[:, :-shift_col]
-    elif shift_col < 0:
-        result[:, :shift_col] = result[:, -shift_col:]
+
+    for i in range(rows):
+        for j in range(cols):
+            new_i = (i + shift_row) % rows
+            new_j = (j + shift_col) % cols
+            result[new_i, new_j] = grid[i, j]
     
     return result
 
