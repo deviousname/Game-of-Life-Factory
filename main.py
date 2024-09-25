@@ -117,10 +117,10 @@ def restructure_colors(colors_list):
 class Factory_View:
     def __init__(
         self,
-        grid_size=(32, 64),
-        cell_size=32,
-        margin=2,
-        n_colors=64,
+        grid_size=(64, 128),
+        cell_size=16,
+        margin=1,
+        n_colors=255,
         window_title="Factory View",
         fullscreen=False, # True is buggy, scaling and text alignment issues
         fps_drawing=60,  # FPS for rendering the screen
@@ -219,7 +219,11 @@ class Factory_View:
 
         # Initialize grid data structures
         self.initialize_grids()
-
+        # Initialize history stacks for both grids
+        self.logic_grid_history = []
+        self.cell_state_grid_history = []
+        # Max history size
+        self.max_history_length = 50  # Adjust as needed
         # Preprocess rulesets for Numba
         self.preprocess_rulesets()
 
@@ -232,6 +236,14 @@ class Factory_View:
         self.clock = pygame.time.Clock()
         self.done = False
         self.bonus = 0  # Player's energy or bonus points
+        self.bonus_timer = 0.0  # Accumulates time for bonus calculation
+        self.bonus_interval = 1.0  # Time interval for bonus calculation in seconds
+        self.minute_cell_changes = 0
+        self.minute_color_counts = np.zeros(len(PRIMARY_COLORS), dtype=int)
+        self.bonus_energy_rate = 0.0
+        self.bonus_defense = 0.0
+        self.bonus_offense = 0.0
+        self.diversity_bonus = 0.0
         
         # Initialize player's logic block inventory
         self.logic_inventory = {ruleset_id: 0 for ruleset_id in RULESET_IDS.values()}
@@ -485,6 +497,12 @@ class Factory_View:
                         self.mode = 'shop'
                     elif event.key == pygame.K_n:
                         self.scientific_notation = not self.scientific_notation  # Toggle notation
+                    elif event.key == pygame.K_i:
+                        if self.mode == 'stats':
+                            self.mode = self.previous_mode  # Return to previous mode
+                        else:
+                            self.previous_mode = self.mode
+                            self.mode = 'stats'
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button <= 3:
                         self.mouse_buttons[event.button - 1] = True
@@ -516,6 +534,7 @@ class Factory_View:
 
     def handle_flood_fill(self):
         """Handle flood fill action based on mode."""
+        self.save_current_state()
         pos = pygame.mouse.get_pos()
         if self.fullscreen:
             # Calculate grid surface position offset (since it's centered)
@@ -620,7 +639,7 @@ class Factory_View:
     def handle_mouse_event(self):
         """Handle mouse interactions."""
         pos = pygame.mouse.get_pos()
-
+        self.save_current_state()
         # Adjust for fullscreen mode if necessary
         if self.fullscreen:
             # Calculate grid surface position offset (since it's centered)
@@ -671,6 +690,14 @@ class Factory_View:
     def update(self):
         """Update the simulation."""
         if self.mode == 'simulation' and not self.paused:
+            # Store previous cell state grid before update
+            if hasattr(self, 'previous_cell_state_grid'):
+                previous_cell_state_grid = self.cell_state_grid.copy()
+            else:
+                # If it's the first frame, initialize previous_cell_state_grid
+                previous_cell_state_grid = self.cell_state_grid.copy()
+
+            # Update the cell state grid
             self.cell_state_grid, births_count = update_cells(
                 self.cell_state_grid,
                 self.logic_grid,
@@ -685,14 +712,29 @@ class Factory_View:
             # Increment frame counter
             self.frame_counter += 1
 
+            # Accumulate time for bonus calculation
+            dt = self.clock.get_time() / 1000.0
+            self.bonus_timer += dt
+
+            # Check if it's time to calculate bonuses
+            if self.bonus_timer >= self.bonus_interval:
+                self.calculate_bonuses()
+                self.bonus_timer -= self.bonus_interval  # Reset the timer
+
             # Accumulate births for energy generation
             self.energy_generated_last += births_count
 
+            # Calculate cell changes between previous and current state
+            cell_changes = np.sum(self.cell_state_grid != previous_cell_state_grid)
+            self.minute_cell_changes += cell_changes
+
+            # Update the previous cell state grid
+            self.previous_cell_state_grid = self.cell_state_grid.copy()
+
             # Tally colors every 'tally_frequency' frames
             if self.frame_counter % self.tally_frequency == 0:
-                self.tally_colors()  # Keep for color_counts and total living cells
-                # Adjusted energy generation rate
-                self.bonus += self.energy_generated_last * 1.0  # Reduced energy gain per birth
+                self.tally_colors()
+                self.bonus += self.energy_generated_last * 1.0  # Adjust energy gain per birth
 
                 # Additional bonus based on color prevalence
                 for logic_id in self.logic_inventory.keys():
@@ -700,20 +742,75 @@ class Factory_View:
                         color_idx = self.logic_id_to_color_index[logic_id]
                         color_count = self.color_counts[color_idx]
                         bonus_for_logic = color_count // 100  # Example bonus calculation
-                        self.bonus += bonus_for_logic * 0.1  # Reduced bonus
+                        self.bonus += bonus_for_logic * 0.1  # Adjust bonus
 
                 self.energy_generation_timer += self.simulation_interval * self.tally_frequency
 
                 if self.energy_generation_timer >= 1.0:
-                    # Save the value of energy generated for display before resetting
-                    energy_generated_for_display = self.energy_generated_last
-
                     # Calculate energy generation rate
-                    self.energy_generation_rate = (energy_generated_for_display * 1.0) / self.energy_generation_timer
+                    self.energy_generation_rate = (self.energy_generated_last * 1.0) / self.energy_generation_timer
 
                     # Reset counters
-                    self.energy_generated_last = 0  # Only reset after calculating generation rate
+                    self.energy_generated_last = 0
                     self.energy_generation_timer = 0.0
+
+    def save_current_state(self):
+        # Save copies of the grids
+        if self.mode == 'building':
+            self.logic_grid_history.append(self.logic_grid.copy())
+            # Limit history size
+            if len(self.logic_grid_history) > self.max_history_length:
+                self.logic_grid_history.pop(0)
+        elif self.mode == 'simulation':
+            self.cell_state_grid_history.append(self.cell_state_grid.copy())
+            # Limit history size
+            if len(self.cell_state_grid_history) > self.max_history_length:
+                self.cell_state_grid_history.pop(0)
+
+    def undo_action(self):
+        if self.mode == 'building' and self.logic_grid_history:
+            self.logic_grid = self.logic_grid_history.pop()
+        elif self.mode == 'simulation' and self.cell_state_grid_history:
+            self.cell_state_grid = self.cell_state_grid_history.pop()
+            
+    def calculate_bonuses(self):
+        """Calculate bonuses based on color diversity and cell activity."""
+        # Calculate average change rate per cell
+        total_cells = self.grid_size[0] * self.grid_size[1]
+
+        if total_cells > 0 and self.bonus_interval > 0:
+            avg_cell_changes_per_sec = self.minute_cell_changes / self.bonus_interval
+            change_rate_per_cell = avg_cell_changes_per_sec / total_cells
+        else:
+            change_rate_per_cell = 0
+
+        # Normalize change_rate_per_cell to [0,1]
+        max_expected_change_rate = 0.05  # Adjust to match expected behavior
+        change_rate_normalized = min(change_rate_per_cell / max_expected_change_rate, 1.0)
+
+        # Calculate offensive and defensive bonuses
+        max_offensive_bonus = 0.2  # 20% bonus
+        max_defensive_bonus = 0.2  # 20% bonus
+        self.bonus_offense = change_rate_normalized * max_offensive_bonus
+        self.bonus_defense = (1 - change_rate_normalized) * max_defensive_bonus
+
+        # Calculate color diversity bonus
+        total_living_cells = np.sum(self.minute_color_counts)
+        if total_living_cells > 0:
+            color_proportions = self.minute_color_counts / total_living_cells
+            simpson_index = 1.0 / np.sum(color_proportions ** 2)
+            max_simpson_index = len(PRIMARY_COLORS)
+            diversity_bonus = simpson_index / max_simpson_index
+            self.diversity_bonus = max(0.01, diversity_bonus * 0.1)  # Ensure minimum bonus if colors exist
+        else:
+            self.diversity_bonus = 0.0
+
+        # Adjust energy generation rate with the diversity bonus
+        self.bonus_energy_rate = self.energy_generation_rate * self.diversity_bonus
+
+        # Reset accumulators
+        self.minute_cell_changes = 0
+        self.minute_color_counts[:] = 0
 
     def tally_colors(self):
         """Tally the living cells and their colors closest to primary colors."""
@@ -737,6 +834,8 @@ class Factory_View:
                             closest_primary_idx = idx
                     if closest_primary_idx != -1:
                         self.color_counts[closest_primary_idx] += 1
+        # Accumulate for bonus calculation
+        self.minute_color_counts += self.color_counts
 
     def draw_menu(self):
         """Draw the menu with the previous mode as the background."""
@@ -862,6 +961,9 @@ class Factory_View:
         elif self.mode == 'shop':
             self.draw_game()
             self.draw_shop()
+        elif self.mode == 'stats':
+            self.draw_game()
+            self.draw_stats()
         else:
             self.draw_game()
 
@@ -1065,6 +1167,98 @@ class Factory_View:
             return f"{number:.1e}"
         else:
             return f"{int(number)}"
+
+    def draw_stats(self):
+        """Draw the stats popup over the current game screen."""
+        # Draw the background grid from the current mode
+        self.draw_game()
+
+        # Draw the semi-transparent overlay and stats popup
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))  # Semi-transparent black
+        self.screen.blit(overlay, (0, 0))
+
+        # Font for drawing text
+        font_title = pygame.font.Font(None, 36)
+        font = pygame.font.Font(None, 28)
+
+        # Draw the stats box
+        box_width = self.width * 0.8
+        box_height = self.height * 0.8
+        box_x = (self.width - box_width) // 2
+        box_y = (self.height - box_height) // 2
+        stats_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+        pygame.draw.rect(self.screen, (50, 50, 50), stats_rect)
+
+        y_offset = box_y + 20
+
+        # Display Energy and Energy Rate
+        energy_text = f"Current Energy: {self.format_number(self.bonus)}"
+        energy_text_surface = font_title.render(energy_text, True, (255, 255, 255))
+        energy_text_rect = energy_text_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(energy_text_surface, energy_text_rect)
+        y_offset += 40
+
+        energy_rate = self.energy_generation_rate + self.bonus_energy_rate
+        energy_rate_text = f"Energy Rate: {self.format_number(energy_rate)} per second"
+        energy_rate_surface = font.render(energy_rate_text, True, (255, 255, 255))
+        energy_rate_rect = energy_rate_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(energy_rate_surface, energy_rate_rect)
+        y_offset += 40
+
+        # Display Bonuses
+        bonuses_text = "Bonuses:"
+        bonuses_surface = font_title.render(bonuses_text, True, (255, 255, 255))
+        bonuses_rect = bonuses_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(bonuses_surface, bonuses_rect)
+        y_offset += 30
+
+        # Diversity bonus
+        diversity_bonus_text = f"Diversity Bonus: {self.diversity_bonus * 100:.1f}%"
+        diversity_bonus_surface = font.render(diversity_bonus_text, True, (255, 255, 255))
+        diversity_bonus_rect = diversity_bonus_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(diversity_bonus_surface, diversity_bonus_rect)
+        y_offset += 30
+
+        # Offensive and Defensive bonuses
+        offense_bonus_text = f"Offensive Bonus: {self.bonus_offense * 100:.1f}%"
+        defense_bonus_text = f"Defensive Bonus: {self.bonus_defense * 100:.1f}%"
+        offense_bonus_surface = font.render(offense_bonus_text, True, (255, 0, 0))
+        defense_bonus_surface = font.render(defense_bonus_text, True, (0, 255, 0))
+        offense_bonus_rect = offense_bonus_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(offense_bonus_surface, offense_bonus_rect)
+        y_offset += 30
+        defense_bonus_rect = defense_bonus_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(defense_bonus_surface, defense_bonus_rect)
+        y_offset += 40
+
+        # Display color counts and their contributions
+        color_counts_text = "Color Counts:"
+        color_counts_surface = font_title.render(color_counts_text, True, (255, 255, 255))
+        color_counts_rect = color_counts_surface.get_rect(center=(self.width // 2, y_offset))
+        self.screen.blit(color_counts_surface, color_counts_rect)
+        y_offset += 30
+
+        total_living_cells = np.sum(self.minute_color_counts)
+        color_names = ["Red", "Green", "Blue", "Yellow", "Cyan", "Magenta", "White", "Black"]
+        for idx, color in enumerate(PRIMARY_COLORS):
+            color_count = self.minute_color_counts[idx]
+            if total_living_cells > 0:
+                proportion = color_count / total_living_cells * 100
+            else:
+                proportion = 0
+            color_name = color_names[idx]
+            color_text = f"{color_name}: {color_count} ({proportion:.1f}%)"
+            color_surface = font.render(color_text, True, color)
+            color_rect = color_surface.get_rect(center=(self.width // 2, y_offset))
+            self.screen.blit(color_surface, color_rect)
+            y_offset += 25
+
+        # Instructions to close stats
+        instructions = "Press 'I' to close stats."
+        instructions_surface = font.render(instructions, True, (255, 255, 255))
+        instructions_rect = instructions_surface.get_rect(center=(self.width // 2, box_y + box_height - 30))
+        self.screen.blit(instructions_surface, instructions_rect)
 
 class TextInputBox:
     def __init__(self, x, y, w, h, text=''):
