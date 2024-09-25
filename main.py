@@ -117,9 +117,9 @@ def restructure_colors(colors_list):
 class Factory_View:
     def __init__(
         self,
-        grid_size=(64, 128),
-        cell_size=16,
-        margin=1,
+        grid_size=(32, 64),
+        cell_size=32,
+        margin=4,
         n_colors=255,
         window_title="Factory View",
         fullscreen=False, # True is buggy, scaling and text alignment issues
@@ -1029,8 +1029,8 @@ class Factory_View:
                     )
 
         # UI for simulation mode
-        font = pygame.font.SysFont(None, 28)
-        font_large = pygame.font.SysFont(None, 48)
+        font = pygame.font.SysFont(None, 32)
+        font_large = pygame.font.SysFont(None, 42)
 
         if self.mode == 'simulation':
             # Display Mode: Simulation in the top-left corner
