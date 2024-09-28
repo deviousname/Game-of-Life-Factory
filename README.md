@@ -2,6 +2,8 @@
 
 ![Game of Life Factory Screenshot](https://raw.githubusercontent.com/deviousname/Game-of-Life-Factory/main/ss1.png)
 
+![Game of Life Factory Screenshot](https://github.com/deviousname/Game-of-Life-Factory/blob/main/anim1.gif)
+
 ## Overview
 
 This game is a dynamic cellular automaton simulation where players build, simulate, and manipulate grids of cells governed by various rulesets. It allows the player to create, simulate, and visualize how different rules influence the behavior of cells. The player can switch between building and simulation modes, modify rulesets, and manage an inventory of logic blocks that control how the cells behave.
