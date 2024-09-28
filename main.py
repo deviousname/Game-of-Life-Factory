@@ -296,6 +296,12 @@ class Factory_View:
         # NEW: Notation toggle
         self.scientific_notation = False  # Add this line to initialize the notation toggle
 
+        # Initialize tracking variables for new and static cells
+        self.minute_new_cells = 0
+        self.minute_static_cells = 0
+        self.defense = 0.0
+        self.offense = 0.0
+        
     def preprocess_rulesets(self):
         """Preprocess rulesets into Numba-compatible arrays."""
         num_rulesets = len(RULESETS)
@@ -726,9 +732,12 @@ class Factory_View:
             # Accumulate births for energy generation
             self.energy_generated_last += births_count
 
-            # Calculate cell changes between previous and current state
-            cell_changes = np.sum(self.cell_state_grid != previous_cell_state_grid)
-            self.minute_cell_changes += cell_changes
+            # Calculate new_cells and static_cells
+            new_cells = np.sum((self.cell_state_grid != self.dead_cell_index) & (previous_cell_state_grid == self.dead_cell_index))
+            static_cells = np.sum((self.cell_state_grid != self.dead_cell_index) & (self.cell_state_grid == previous_cell_state_grid))
+
+            self.minute_new_cells += new_cells
+            self.minute_static_cells += static_cells
 
             # Update the previous cell state grid
             self.previous_cell_state_grid = self.cell_state_grid.copy()
@@ -736,9 +745,12 @@ class Factory_View:
             # Tally colors every 'tally_frequency' frames
             if self.frame_counter % self.tally_frequency == 0:
                 self.tally_colors()
-                self.bonus += self.energy_generated_last * 1.0  # Adjust energy gain per birth
+                
+                # Adjust energy gain per birth with diversity bonus
+                total_energy_generated = self.energy_generated_last * (1.0 + self.diversity_bonus)
+                self.bonus += total_energy_generated
 
-                # Additional bonus based on color prevalence
+                # Additional bonuses based on color prevalence
                 for logic_id in self.logic_inventory.keys():
                     if logic_id in self.logic_id_to_color_index:
                         color_idx = self.logic_id_to_color_index[logic_id]
@@ -746,15 +758,24 @@ class Factory_View:
                         bonus_for_logic = color_count // 100  # Example bonus calculation
                         self.bonus += bonus_for_logic * 0.1  # Adjust bonus
 
+                # Update offense and defense ratings
+                self.offense += self.bonus_offense
+                self.defense += self.bonus_defense
+
+                # Update energy_generation_timer
                 self.energy_generation_timer += self.simulation_interval * self.tally_frequency
 
+                # Check if it's time to calculate energy generation rate
                 if self.energy_generation_timer >= 1.0:
-                    # Calculate energy generation rate
-                    self.energy_generation_rate = (self.energy_generated_last * 1.0) / self.energy_generation_timer
+                    # Calculate energy_generation_rate based on the past period
+                    self.energy_generation_rate = self.energy_generated_last / self.energy_generation_timer
 
                     # Reset counters
                     self.energy_generated_last = 0
                     self.energy_generation_timer = 0.0
+
+                # Reset energy_generated_last for the next tally
+                self.energy_generated_last = 0
 
     def save_current_state(self):
         """Save the current state of grids and logic inventory for undo."""
@@ -777,25 +798,10 @@ class Factory_View:
             self.cell_state_grid = self.cell_state_grid_history.pop()
 
     def calculate_bonuses(self):
-        """Calculate bonuses based on color diversity and cell activity."""
-        # Calculate average change rate per cell
-        total_cells = self.grid_size[0] * self.grid_size[1]
-
-        if total_cells > 0 and self.bonus_interval > 0:
-            avg_cell_changes_per_sec = self.minute_cell_changes / self.bonus_interval
-            change_rate_per_cell = avg_cell_changes_per_sec / total_cells
-        else:
-            change_rate_per_cell = 0
-
-        # Normalize change_rate_per_cell to [0,1]
-        max_expected_change_rate = 0.05  # Adjust to match expected behavior
-        change_rate_normalized = min(change_rate_per_cell / max_expected_change_rate, 1.0)
-
-        # Calculate offensive and defensive bonuses
-        max_offensive_bonus = 0.2  # 20% bonus
-        max_defensive_bonus = 0.2  # 20% bonus
-        self.bonus_offense = change_rate_normalized * max_offensive_bonus
-        self.bonus_defense = (1 - change_rate_normalized) * max_defensive_bonus
+        """Calculate bonuses based on cell activity and color diversity."""
+        # Calculate Offense and Defense based on new and static cells
+        self.bonus_offense = self.minute_new_cells * 1.0  # Each new cell adds +1 attack
+        self.bonus_defense = self.minute_static_cells * 1.0  # Each static cell adds +1 defense
 
         # Calculate color diversity bonus
         total_living_cells = np.sum(self.minute_color_counts)
@@ -804,15 +810,21 @@ class Factory_View:
             simpson_index = 1.0 / np.sum(color_proportions ** 2)
             max_simpson_index = len(PRIMARY_COLORS)
             diversity_bonus = simpson_index / max_simpson_index
-            self.diversity_bonus = max(0.01, diversity_bonus * 0.1)  # Ensure minimum bonus if colors exist
+            self.diversity_bonus = max(0.01, diversity_bonus * 0.1)  # Ensure a minimum bonus
         else:
             self.diversity_bonus = 0.0
 
         # Adjust energy generation rate with the diversity bonus
         self.bonus_energy_rate = self.energy_generation_rate * self.diversity_bonus
 
+        # Update offense and defense ratings
+        self.offense += self.bonus_offense
+        self.defense += self.bonus_defense
+
         # Reset accumulators
         self.minute_cell_changes = 0
+        self.minute_new_cells = 0
+        self.minute_static_cells = 0
         self.minute_color_counts[:] = 0
 
     def tally_colors(self):
@@ -1107,7 +1119,7 @@ class Factory_View:
                     x += surface.get_width()
 
             # Display energy and alive cell counts below the text (both paused and unpaused)
-            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate + 1)}/s)"
+            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate + self.bonus_energy_rate)}/s)"
             bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
             x = (self.width - bonus_surface.get_width()) // 2
             self.screen.blit(bonus_surface, (x, 35))  # Adjust y position to not overlap
@@ -1240,18 +1252,18 @@ class Factory_View:
         diversity_bonus_rect = diversity_bonus_surface.get_rect(center=(self.width // 2, y_offset))
         self.screen.blit(diversity_bonus_surface, diversity_bonus_rect)
         y_offset += 30
-        '''
+
         # Offensive and Defensive bonuses
-        offense_bonus_text = f"Offensive Bonus: {self.bonus_offense * 100:.1f}%"
-        defense_bonus_text = f"Defensive Bonus: {self.bonus_defense * 100:.1f}%"
-        offense_bonus_surface = font.render(offense_bonus_text, True, (255, 0, 0))
-        defense_bonus_surface = font.render(defense_bonus_text, True, (0, 255, 0))
+        offense_bonus_text = f"Offensive Bonus: +{self.bonus_offense:.1f}"
+        defense_bonus_text = f"Defensive Bonus: +{self.bonus_defense:.1f}"
+        offense_bonus_surface = font.render(offense_bonus_text, True, (255, 0, 0))  # Red for offense
+        defense_bonus_surface = font.render(defense_bonus_text, True, (0, 255, 0))  # Green for defense
         offense_bonus_rect = offense_bonus_surface.get_rect(center=(self.width // 2, y_offset))
         self.screen.blit(offense_bonus_surface, offense_bonus_rect)
         y_offset += 30
         defense_bonus_rect = defense_bonus_surface.get_rect(center=(self.width // 2, y_offset))
         self.screen.blit(defense_bonus_surface, defense_bonus_rect)
-        y_offset += 40'''
+        y_offset += 40
 
         # Display color counts and their contributions
         color_counts_text = "Color Counts:"
