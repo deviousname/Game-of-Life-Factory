@@ -865,6 +865,33 @@ class Factory:
                     self.cell_state_grid[row, col] = self.dead_cell_index
                     # Remove erased cells from the painted cells list
                     self.painted_cells_during_pause.discard((row, col))
+                    
+    def purchase_logic_block(self, logic_id, quantity):
+        """Attempt to purchase the specified quantity of logic blocks."""
+        price_per_block = self.get_logic_price(logic_id)
+        
+        # Calculate total price based on quantity
+        if quantity == '+TIER':
+            # Max out the number of blocks to upgrade the tier
+            quantity = self.calculate_max_purchase(logic_id)
+        
+        total_price = price_per_block * quantity
+
+        # Check if the player has enough energy to make the purchase
+        if self.bonus >= total_price:
+            # Deduct the total price from the player's energy (bonus)
+            self.bonus -= total_price
+            
+            # Add the purchased blocks to the player's inventory
+            self.logic_inventory[logic_id]['count'] += quantity
+
+            # If the player purchased the max number, trigger a tier upgrade check
+            if quantity == self.calculate_max_purchase(logic_id):
+                self.check_for_tier_upgrade(logic_id)
+            
+            print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]} for {self.format_number(total_price)} energy.")
+        else:
+            print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. Total cost: {self.format_number(total_price)}.")
 
     def calculate_initial_energy_burst(self):
         """Calculate energy burst for cells painted during pause."""
@@ -1154,11 +1181,11 @@ class Factory:
         # Calculate box dimensions dynamically based on content width
         button_width = 70
         button_spacing = 10
-        button_area_width = (button_width + button_spacing) * 3  # For "Buy 1", "Buy 25", "Buy MAX"
+        button_area_width = (button_width + button_spacing) * 3  # For "Buy 1", "Buy 25", "+TIER"
         
         # Calculate overall box width based on the widest pane (name + price + button area)
         box_width = max_logic_name_width + max_price_width + button_area_width + 80  # Extra padding between panes
-        box_height = 80 + len(self.logic_prices) * 50  # Height based on the number of lofgic types
+        box_height = 80 + len(self.logic_prices) * 50  # Height based on the number of logic types
         box_x = (self.width - box_width) // 2
         box_y = (self.height - box_height) // 2
         popup_rect = pygame.Rect(box_x, box_y, box_width, box_height)
@@ -1189,22 +1216,38 @@ class Factory:
             price_surface = font.render(f"Price per block: {self.format_number(price_per_block)}", True, (255, 255, 255))
             self.screen.blit(price_surface, (box_x + max_logic_name_width + 40, y_offset))  # Adjust the position
 
-            # Buy buttons (1, 25, MAX)
+            # Buy buttons (Buy: 1 | 25 | +TIER)
             start_x = box_x + max_logic_name_width + max_price_width + 80  # Start after price text, with extra spacing
-            quantities = [1, 25, 'MAX']
+            
+            # Render the "Buy:" label first
+            buy_label_surface = font.render("Buy:", True, (255, 255, 255))
+            self.screen.blit(buy_label_surface, (start_x, y_offset))
+            start_x += font.size("Buy: ")[0] + 10  # Move to the right for the buttons
+
+            # Quantities for the buttons
+            quantities = [1, 25, '+TIER']
             for qty in quantities:
-                button_rect = pygame.Rect(start_x, y_offset - 5, button_width, 30)  # Button size: 70x30
+                # Adjust the width for the +TIER button if needed
+                button_text = str(qty)
+                button_width = font.size(button_text)[0] + 20  # Make the button width dynamic based on text size
+
+                button_rect = pygame.Rect(start_x, y_offset - 5, button_width, 30)  # Dynamic button size
                 pygame.draw.rect(self.screen, (70, 70, 70), button_rect)
-                qty_text = str(qty) if qty != 'MAX' else 'MAX'
-                buy_text = font.render(f"Buy {qty_text}", True, (255, 255, 255))
+                
+                # Render the button text
+                buy_text = font.render(button_text, True, (255, 255, 255))
                 buy_text_rect = buy_text.get_rect(center=button_rect.center)
                 self.screen.blit(buy_text, buy_text_rect)
+
+                # Add the button to the list for later interaction
                 self.buy_buttons.append((button_rect, logic_id, qty))
+                
+                # Move the start_x to the next button's position
                 start_x += button_width + button_spacing
 
             # Adjust y_offset for the next row
             y_offset += 50
-            
+
     def format_number(self, number):
         """Format the number based on the user's notation preference (scientific or normal)."""
         if self.scientific_notation:
