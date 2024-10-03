@@ -159,9 +159,9 @@ def restructure_colors(colors_list):
 class Factory:
     def __init__(
         self,
-        grid_size=(42, 88),
-        cell_size=24,
-        margin=4,
+        grid_size=(64, 128),
+        cell_size=16,
+        margin=2,
         n_colors=255,
         window_title="Factory View",
         fullscreen=False, # True is buggy, scaling and text alignment issues
@@ -493,7 +493,10 @@ class Factory:
 
         elif event.key == pygame.K_i:
             self.toggle_info_panel()
-
+            
+        elif event.key == pygame.K_l:
+            self.print_living_cells()
+            
         elif event.key == pygame.K_TAB:
             self.toggle_mode('simulation', 'building')
 
@@ -769,22 +772,28 @@ class Factory:
                     
     def calculate_physical_defense_and_offense(self):
         """Calculate physical defense based on static living cells, and offense based on active living cells."""
-
         # Ensure that we have a previous cell state grid to compare with
         if not hasattr(self, 'previous_cell_state_grid'):
-            return 0, 0  # If no previous state is available, return 0 for both defense and offense
+            self.previous_cell_state_grid = (self.cell_state_grid != self.dead_cell_index).copy()  # Only track living state, not color
+            return 0, 0  # Return 0 for both defense and offense the first time
 
-        # Count static living cells (defense)
-        static_cells_count = np.sum(
-            (self.cell_state_grid != self.dead_cell_index) &  # The current cell is alive
-            (self.previous_cell_state_grid == self.cell_state_grid)  # The cell hasn't changed between frames
-        )
+        # Track the "alive" state of the current and previous grids (ignore color, just check if cells are alive or dead)
+        current_alive_state = (self.cell_state_grid != self.dead_cell_index)
+        previous_alive_state = (self.previous_cell_state_grid != self.dead_cell_index)
 
-        # Count total living cells (alive cells)
-        total_living_cells = np.sum(self.cell_state_grid != self.dead_cell_index)
+        # Count static living cells (defense) — cells that are alive in both states
+        static_cells_count = np.sum(current_alive_state & previous_alive_state)
+
+        # Count total living cells
+        total_living_cells = np.sum(current_alive_state)
 
         # Offense is the number of active (changing) cells, which is total living cells minus static cells
         active_cells_count = total_living_cells - static_cells_count
+
+        # Debugging: Print the number of static and active cells
+        #print(f"Static cells (defense): {static_cells_count}, Active cells (offense): {active_cells_count}, Total living cells: {total_living_cells}")
+
+        # Do not update previous_cell_state_grid here; it's updated in the update() method
 
         return static_cells_count, active_cells_count
 
@@ -809,7 +818,7 @@ class Factory:
                                 stack.append((nr, nc))
 
     def handle_mouse_event(self):
-        """Handle mouse interactions."""
+        """Handle mouse interactions with dynamic brush size based on pause state."""
         pos = pygame.mouse.get_pos()
         self.save_current_state()
         
@@ -834,90 +843,141 @@ class Factory:
             col = pos[0] // (self.cell_size + self.margin)  # X-coordinate (column in NumPy)
             row = (pos[1] - 30) // (self.cell_size + self.margin)  # Y-coordinate (row in NumPy)
 
+        # Determine brush size based on pause state
+        if self.mode == 'simulation':
+            if self.paused:
+                # 1x1 brush when paused
+                brush_offsets = [(0, 0)]
+            else:
+                # 2x2 brush when unpaused
+                brush_offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        else:
+            # In building mode, use 1x1 brush
+            brush_offsets = [(0, 0)]
+
         # Handle painting in the grid based on the current mode
         if 0 <= row < self.grid_size[0] and 0 <= col < self.grid_size[1]:
             if self.mode == 'building':
                 if self.mouse_buttons[0]:  # Left click to assign logic
-                    if self.logic_inventory.get(self.selected_ruleset_id, {'count': 0})['count'] > 0 or self.selected_ruleset_id in self.infinite_logic_ids:
-                        old_logic_id = self.logic_grid[row, col]
-                        if old_logic_id != self.selected_ruleset_id:
-                            # Refund the old logic block if it's not Void and not infinite
-                            if old_logic_id != 0 and old_logic_id not in self.infinite_logic_ids:
-                                self.logic_inventory[old_logic_id]['count'] += 1
-                            self.logic_grid[row, col] = self.selected_ruleset_id
-                            if self.selected_ruleset_id not in self.infinite_logic_ids:
-                                self.logic_inventory[self.selected_ruleset_id]['count'] -= 1
-                    else:
-                        #print("Not enough blocks of this logic type.")
-                        pass
+                    for dr, dc in brush_offsets:
+                        current_row = row + dr
+                        current_col = col + dc
+                        if 0 <= current_row < self.grid_size[0] and 0 <= current_col < self.grid_size[1]:
+                            if self.logic_inventory.get(self.selected_ruleset_id, {'count': 0})['count'] > 0 or self.selected_ruleset_id in self.infinite_logic_ids:
+                                old_logic_id = self.logic_grid[current_row, current_col]
+                                if old_logic_id != self.selected_ruleset_id:
+                                    # Refund the old logic block if it's not Void and not infinite
+                                    if old_logic_id != RULESET_IDS["Void"] and old_logic_id not in self.infinite_logic_ids:
+                                        self.logic_inventory[old_logic_id]['count'] += 1
+                                    self.logic_grid[current_row, current_col] = self.selected_ruleset_id
+                                    if self.selected_ruleset_id not in self.infinite_logic_ids:
+                                        self.logic_inventory[self.selected_ruleset_id]['count'] -= 1
                 if self.mouse_buttons[2]:  # Right click to erase logic (set to Void state)
-                    old_logic_id = self.logic_grid[row, col]
-                    if old_logic_id != RULESET_IDS["Void"]:
-                        # Refund the tile cost based on the tier of the block being removed
-                        tier = self.logic_inventory[old_logic_id]['tier']
-                        price_per_block = self.get_logic_price(old_logic_id)
-                        refund_amount = price_per_block * tier  # Refund based on tier's tile price
-                        self.bonus += refund_amount
-                        
-                        # Print confirmation of refund
-                        print(f"Refunded {self.format_number(refund_amount)} energy for removing a Tier {tier} block.")
+                    for dr, dc in brush_offsets:
+                        current_row = row + dr
+                        current_col = col + dc
+                        if 0 <= current_row < self.grid_size[0] and 0 <= current_col < self.grid_size[1]:
+                            old_logic_id = self.logic_grid[current_row, current_col]
+                            if old_logic_id != RULESET_IDS["Void"]:
+                                # Refund the tile cost based on the tier of the block being removed
+                                tier = self.logic_inventory[old_logic_id]['tier']
+                                price_per_block = self.get_logic_price(old_logic_id)
+                                refund_amount = price_per_block * tier  # Refund based on tier's tile price
+                                self.bonus += refund_amount
+                                
+                                # Print confirmation of refund
+                                print(f"Refunded {self.format_number(refund_amount)} energy for removing a Tier {tier} block.")
 
-                        # Increment the player's inventory for the removed block
-                        if old_logic_id not in self.infinite_logic_ids:
-                            self.logic_inventory[old_logic_id]['count'] += 1
+                                # Increment the player's inventory for the removed block
+                                if old_logic_id not in self.infinite_logic_ids:
+                                    self.logic_inventory[old_logic_id]['count'] += 1
 
-                        # Set the block back to Void
-                        self.logic_grid[row, col] = RULESET_IDS["Void"]
-                        
-            if self.mode == 'simulation' and self.paused:
-                if self.mouse_buttons[0]:  # Left click to paint living cells
-                    self.cell_state_grid[row, col] = self.selected_color_index
-                    # Track painted cells if simulation is paused
-                    self.painted_cells_during_pause.add((row, col))
-                elif self.mouse_buttons[2]:  # Right click to erase cells
-                    self.cell_state_grid[row, col] = self.dead_cell_index
-                    # Remove erased cells from the painted cells list
-                    self.painted_cells_during_pause.discard((row, col))
-                    
+                                # Set the block back to Void
+                                self.logic_grid[current_row, current_col] = RULESET_IDS["Void"]
+                                    
+            elif self.mode == 'simulation':
+                for dr, dc in brush_offsets:
+                    current_row = row + dr
+                    current_col = col + dc
+                    if 0 <= current_row < self.grid_size[0] and 0 <= current_col < self.grid_size[1]:
+                        if self.mouse_buttons[0]:  # Left click to paint living cells
+                            # Check if the cell was dead before painting
+                            was_dead = self.cell_state_grid[current_row, current_col] == self.dead_cell_index
+                            # Paint the cell with the selected color
+                            self.cell_state_grid[current_row, current_col] = self.selected_color_index
+                            # Award bonus only if the cell was dead
+                            if was_dead:
+                                self.bonus += 1  # Increase energy by +1 per cell
+                                # Track painted cells if needed
+                                self.painted_cells_during_pause.add((current_row, current_col))
+                        if self.mouse_buttons[2]:  # Right click to erase cells
+                            if self.cell_state_grid[current_row, current_col] != self.dead_cell_index:
+                                self.cell_state_grid[current_row, current_col] = self.dead_cell_index
+                                # Remove erased cells from the painted cells list
+                                self.painted_cells_during_pause.discard((current_row, current_col))
+
+    def calculate_upgrade_cost(self, logic_id):
+        """Calculate the cost of upgrading to the next tier for a specific logic type."""
+        current_tier = self.logic_inventory[logic_id]['tier']
+        price_per_block = self.get_logic_price(logic_id)
+        total_cells = self.grid_size[0] * self.grid_size[1]
+        placed_blocks = np.sum(self.logic_grid == logic_id)
+
+        # Increase the cost exponentially as the tier increases
+        upgrade_cost = placed_blocks * price_per_block * current_tier  # Cost increases with the current tier
+        return upgrade_cost
+
     def purchase_logic_block(self, logic_id, quantity):
         """Attempt to purchase the specified quantity of logic blocks."""
+        total_cells = self.grid_size[0] * self.grid_size[1]
+        placed_blocks = np.sum(self.logic_grid == logic_id)
+        owned_blocks = self.logic_inventory[logic_id]['count']
+        max_additional_blocks = total_cells - (placed_blocks + owned_blocks)
+
         if quantity == '+TIER':
-            # Handle tier upgrade
-            # Remove all blocks of this logic type from the grid
-            removed_blocks_count = 0
-            for row in range(self.grid_size[0]):
-                for col in range(self.grid_size[1]):
-                    if self.logic_grid[row, col] == logic_id:
-                        removed_blocks_count += 1
-                        self.logic_grid[row, col] = RULESET_IDS["Void"]
+            # Calculate the cost to upgrade the tier
+            upgrade_cost = self.calculate_upgrade_cost(logic_id)
 
-            # Refund their total cost back to the player
-            tier = self.logic_inventory[logic_id]['tier']
-            price_per_block = self.get_logic_price(logic_id)
-            total_refund = removed_blocks_count * price_per_block
-            self.bonus += total_refund
+            # Check if the player has enough energy for the upgrade
+            if self.bonus >= upgrade_cost:
+                # Proceed with the upgrade
+                self.bonus -= upgrade_cost
 
-            # Set their block count to 0 for that type
-            self.logic_inventory[logic_id]['count'] = 0
+                # Remove all blocks of the current tier
+                removed_blocks_count = 0
+                for row in range(self.grid_size[0]):
+                    for col in range(self.grid_size[1]):
+                        if self.logic_grid[row, col] == logic_id:
+                            removed_blocks_count += 1
+                            self.logic_grid[row, col] = RULESET_IDS["Void"]
 
-            # Upgrade the tier level
-            self.logic_inventory[logic_id]['tier'] += 1
+                # Refund based on the removed blocks
+                total_refund = removed_blocks_count * self.get_logic_price(logic_id)
+                self.bonus += total_refund
 
-            print(f"Upgraded {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier']}.")
-            print(f"Refunded {self.format_number(total_refund)} energy for removed blocks.")
+                # Upgrade tier and reset the block count
+                self.logic_inventory[logic_id]['count'] = 0
+                self.logic_inventory[logic_id]['tier'] += 1
+
+                print(f"Upgraded {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier']}.")
+                print(f"Refunded {self.format_number(total_refund)} energy for removed blocks.")
+            else:
+                print(f"Not enough energy to upgrade {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier'] + 1}. "
+                      f"Required: {self.format_number(upgrade_cost)}, Available: {self.format_number(self.bonus)}")
+
         else:
-            # Proceed with purchasing blocks
+            # Handle regular block purchasing
+            quantity = min(quantity, max_additional_blocks)
+            if quantity <= 0:
+                print("You already own or have placed the maximum number of blocks for this grid.")
+                return
+
             price_per_block = self.get_logic_price(logic_id)
             total_price = price_per_block * quantity
 
-            # Check if the player has enough energy to make the purchase
             if self.bonus >= total_price:
-                # Deduct the total price from the player's energy (bonus)
                 self.bonus -= total_price
-
-                # Add the purchased blocks to the player's inventory
                 self.logic_inventory[logic_id]['count'] += quantity
-
                 print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]} for {self.format_number(total_price)} energy.")
             else:
                 print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. Total cost: {self.format_number(total_price)}.")
@@ -940,7 +1000,7 @@ class Factory:
             # Clear the undo history when the simulation is unpaused
             if self.cell_state_grid_history:
                 self.cell_state_grid_history.clear()
-                
+
             # Store previous cell state grid before update
             if hasattr(self, 'previous_cell_state_grid'):
                 previous_cell_state_grid = self.cell_state_grid.copy()
@@ -967,6 +1027,10 @@ class Factory:
                 logic_inventory_array,  # Pass the logic inventory array
                 logic_base_energy_array  # Pass the base energy array here
             )
+
+            # Print debug information for grid update
+            #print(f"Updated cell grid. Births: {births_count}, Core energy generated: {core_energy_generated}")
+            #print(f"Current cell state grid (sample): \n{self.cell_state_grid[:5, :5]}")  # Print a sample of the grid
 
             # Track whether any Tier 2 or higher blocks are contributing to energy generation
             tier_2_or_higher_energy = any(
@@ -998,7 +1062,7 @@ class Factory:
                 # Calculate the bonus energy based on diversity
                 bonus_energy = self.core_energy_generated_last * self.diversity_bonus
                 self.total_energy_generated = self.core_energy_generated_last + bonus_energy
-                
+
                 # Add total energy generated to the player bonus
                 self.bonus += self.total_energy_generated
 
@@ -1015,10 +1079,13 @@ class Factory:
 
                 # Reset energy_generated_last for the next tally
                 self.energy_generated_last = 0
+                
+            # Calculate offense and defense before updating previous_cell_state_grid
+            self.defense, self.offense = self.calculate_physical_defense_and_offense()
 
             # Update the previous cell state grid
             self.previous_cell_state_grid = self.cell_state_grid.copy()
-
+            
     def save_current_state(self):
         """Save the current state of grids and logic inventory for undo."""
         if self.mode == 'building':
@@ -1519,9 +1586,10 @@ class Factory:
         font_title = pygame.font.Font(None, 36)
         font = pygame.font.Font(None, 28)
 
-        # Get defense and offense counts
-        defense, offense = self.calculate_physical_defense_and_offense()
-
+        # Use the stored defense and offense counts
+        defense = self.defense if hasattr(self, 'defense') else 0
+        offense = self.offense if hasattr(self, 'offense') else 0
+        
         # Define the stats to be displayed
         stat_items = [
             f"Energy: {self.format_number(self.bonus)}",
@@ -1577,6 +1645,10 @@ class Factory:
         instructions_rect = instructions_surface.get_rect(center=(self.width // 2, box_y + int(box_height * .96)))
         self.screen.blit(instructions_surface, instructions_rect)
         self.screen.blit(instructions_surface, instructions_rect)
+        
+    def print_living_cells(self):
+        total_living_cells = np.sum(self.cell_state_grid != self.dead_cell_index)
+        print(f"Total living cells: {total_living_cells}")
 
 class TextInputBox:
     def __init__(self, x, y, w, h, text=''):
@@ -1666,28 +1738,13 @@ def convolve(grid, offsets):
     return neighbor_count
 
 @njit
-def compute_color_sum(grid, colors_array, offsets, black_index):
-    """Accumulate the color values for each cell's neighbors."""
-    rows, cols = grid.shape
-    color_sum = np.zeros((rows, cols, 3), dtype=np.float64)  # RGB sum for each cell
-
-    for offset in offsets:
-        shifted_grid = shift_grid(grid, offset[0], offset[1])
-        for i in range(rows):
-            for j in range(cols):
-                if shifted_grid[i, j] != black_index:  # Changed from dead_cell_index to black_index
-                    color_sum[i, j] += colors_array[shifted_grid[i, j]]  # Accumulate color
-
-    return color_sum
-
-@njit
 def update_cells(
     cell_state_grid,
     logic_grid,
     birth_rules_array,
     survival_rules_array,
     rule_lengths,
-    black_index,
+    dead_cell_index,
     neighbor_offsets,
     colors_array,
     logic_inventory_array,
@@ -1700,10 +1757,10 @@ def update_cells(
     energy_generated = 0  # Track energy generated from births
 
     # 1. Precompute neighbor counts using manual shifting
-    live_neighbor_count = convolve(cell_state_grid != black_index, neighbor_offsets)
+    live_neighbor_count = convolve(cell_state_grid != dead_cell_index, neighbor_offsets)
 
     # 2. Precompute color sums for living neighbors
-    neighbor_color_sum = compute_color_sum(cell_state_grid, colors_array, neighbor_offsets, black_index)
+    neighbor_color_sum = compute_color_sum(cell_state_grid, colors_array, neighbor_offsets, dead_cell_index)
 
     # 3. Iterate through each cell and apply rules
     for i in range(rows):
@@ -1719,7 +1776,7 @@ def update_cells(
             S_len = rule_lengths[ruleset_id, 1]
 
             live_neighbors = live_neighbor_count[i, j]
-            is_alive = cell_state_grid[i, j] != black_index
+            is_alive = cell_state_grid[i, j] != dead_cell_index
 
             if is_alive:
                 # Check survival condition
@@ -1729,7 +1786,7 @@ def update_cells(
                         survived = True
                         break
                 if not survived:
-                    new_grid[i, j] = black_index
+                    new_grid[i, j] = dead_cell_index
                 else:
                     # Calculate the average color of the living neighbors
                     if live_neighbors > 0:
@@ -1761,6 +1818,21 @@ def update_cells(
                     energy_generated += energy_to_add
 
     return new_grid, births_count, energy_generated
+
+@njit
+def compute_color_sum(grid, colors_array, offsets, dead_cell_index):
+    """Accumulate the color values for each cell's neighbors."""
+    rows, cols = grid.shape
+    color_sum = np.zeros((rows, cols, 3), dtype=np.float64)  # RGB sum for each cell
+
+    for offset in offsets:
+        shifted_grid = shift_grid(grid, offset[0], offset[1])
+        for i in range(rows):
+            for j in range(cols):
+                if shifted_grid[i, j] != dead_cell_index:
+                    color_sum[i, j] += colors_array[shifted_grid[i, j]]  # Accumulate color
+
+    return color_sum
 
 @njit
 def find_closest_color(colors_array, avg_color, num_colors):
