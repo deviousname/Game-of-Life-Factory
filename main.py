@@ -571,9 +571,9 @@ class Factory:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left click
             mouse_pos = pygame.mouse.get_pos()
             if self.copy_button_rect.collidepoint(mouse_pos):
-                self.copy_seed()
+                self.handle_save()
             elif self.paste_button_rect.collidepoint(mouse_pos):
-                self.paste_seed()
+                self.handle_load()
 
     def handle_shop_mouse_event(self, event):
         """Handle mouse events in shop mode."""
