@@ -98,6 +98,20 @@ RULESETS = {
 RULESET_IDS = {name: idx for idx, name in enumerate(RULESETS.keys())}
 ID_RULESETS = {idx: name for name, idx in RULESET_IDS.items()}
 
+# Create a NumPy array for base energy, indexed by the logic ID
+logic_base_energy_array = np.zeros(len(RULESETS), dtype=np.int32)
+
+# Set base energy values for each logic type
+logic_base_energy_array[RULESET_IDS["Conway"]] = 1
+logic_base_energy_array[RULESET_IDS["HighLife"]] = 2
+logic_base_energy_array[RULESET_IDS["DayAndNight"]] = 3
+logic_base_energy_array[RULESET_IDS["Seeds"]] = 4
+logic_base_energy_array[RULESET_IDS["LifeWithoutDeath"]] = 5
+logic_base_energy_array[RULESET_IDS["Maze"]] = 6
+logic_base_energy_array[RULESET_IDS["Gnarl"]] = 7
+logic_base_energy_array[RULESET_IDS["Replicator"]] = 8
+logic_base_energy_array[RULESET_IDS["Void"]] = 0  # Void generates no energy
+
 # Define primary colors in RGB space, adding pure white and black
 PRIMARY_COLORS = [
     (255, 0, 0),     # Red (Fire)
@@ -402,15 +416,13 @@ class Factory:
         dummy_birth_rules_array = self.birth_rules_array
         dummy_survival_rules_array = self.survival_rules_array
         dummy_rule_lengths = self.rule_lengths
-        dummy_black_index = self.dead_cell_index  # Changed variable name for clarity
+        dummy_black_index = self.dead_cell_index
         dummy_neighbor_offsets = self.neighbor_offsets
         dummy_colors_array = self.colors_array
-        
-        # Create a dummy logic_inventory NumPy array (for each logic, [count, tier])
-        num_rulesets = len(RULESETS)
-        dummy_logic_inventory_array = np.zeros((num_rulesets, 2), dtype=np.int32)  # Set all to zero and tier 1
+        dummy_logic_base_energy_array = logic_base_energy_array  # Use the NumPy array instead
+        dummy_logic_inventory_array = np.zeros((len(RULESETS), 2), dtype=np.int32)  # Dummy inventory
 
-        # Call update_cells() with dummy data
+        # Call update_cells with dummy data
         update_cells(
             dummy_cell_state_grid,
             dummy_logic_grid,
@@ -420,7 +432,8 @@ class Factory:
             dummy_black_index,
             dummy_neighbor_offsets,
             dummy_colors_array,
-            dummy_logic_inventory_array  # Pass dummy logic_inventory_array
+            dummy_logic_inventory_array,
+            dummy_logic_base_energy_array  # Pass base energy array to the function
         )
 
     def cycle_ruleset(self, forward=True):
@@ -868,30 +881,46 @@ class Factory:
                     
     def purchase_logic_block(self, logic_id, quantity):
         """Attempt to purchase the specified quantity of logic blocks."""
-        price_per_block = self.get_logic_price(logic_id)
-        
-        # Calculate total price based on quantity
         if quantity == '+TIER':
-            # Max out the number of blocks to upgrade the tier
-            quantity = self.calculate_max_purchase(logic_id)
-        
-        total_price = price_per_block * quantity
+            # Handle tier upgrade
+            # Remove all blocks of this logic type from the grid
+            removed_blocks_count = 0
+            for row in range(self.grid_size[0]):
+                for col in range(self.grid_size[1]):
+                    if self.logic_grid[row, col] == logic_id:
+                        removed_blocks_count += 1
+                        self.logic_grid[row, col] = RULESET_IDS["Void"]
 
-        # Check if the player has enough energy to make the purchase
-        if self.bonus >= total_price:
-            # Deduct the total price from the player's energy (bonus)
-            self.bonus -= total_price
-            
-            # Add the purchased blocks to the player's inventory
-            self.logic_inventory[logic_id]['count'] += quantity
+            # Refund their total cost back to the player
+            tier = self.logic_inventory[logic_id]['tier']
+            price_per_block = self.get_logic_price(logic_id)
+            total_refund = removed_blocks_count * price_per_block
+            self.bonus += total_refund
 
-            # If the player purchased the max number, trigger a tier upgrade check
-            if quantity == self.calculate_max_purchase(logic_id):
-                self.check_for_tier_upgrade(logic_id)
-            
-            print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]} for {self.format_number(total_price)} energy.")
+            # Set their block count to 0 for that type
+            self.logic_inventory[logic_id]['count'] = 0
+
+            # Upgrade the tier level
+            self.logic_inventory[logic_id]['tier'] += 1
+
+            print(f"Upgraded {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier']}.")
+            print(f"Refunded {self.format_number(total_refund)} energy for removed blocks.")
         else:
-            print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. Total cost: {self.format_number(total_price)}.")
+            # Proceed with purchasing blocks
+            price_per_block = self.get_logic_price(logic_id)
+            total_price = price_per_block * quantity
+
+            # Check if the player has enough energy to make the purchase
+            if self.bonus >= total_price:
+                # Deduct the total price from the player's energy (bonus)
+                self.bonus -= total_price
+
+                # Add the purchased blocks to the player's inventory
+                self.logic_inventory[logic_id]['count'] += quantity
+
+                print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]} for {self.format_number(total_price)} energy.")
+            else:
+                print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. Total cost: {self.format_number(total_price)}.")
 
     def calculate_initial_energy_burst(self):
         """Calculate energy burst for cells painted during pause."""
@@ -935,7 +964,8 @@ class Factory:
                 self.dead_cell_index,
                 self.neighbor_offsets,
                 self.colors_array,
-                logic_inventory_array  # Pass logic_inventory_array instead of a dictionary
+                logic_inventory_array,  # Pass the logic inventory array
+                logic_base_energy_array  # Pass the base energy array here
             )
 
             # Track whether any Tier 2 or higher blocks are contributing to energy generation
@@ -1660,7 +1690,8 @@ def update_cells(
     black_index,
     neighbor_offsets,
     colors_array,
-    logic_inventory_array
+    logic_inventory_array,
+    logic_base_energy_array  # Pass base energy array as a parameter
 ):
     rows, cols = cell_state_grid.shape
     new_grid = cell_state_grid.copy()
@@ -1719,8 +1750,12 @@ def update_cells(
                     # Retrieve the tier of the logic block from logic_inventory_array
                     logic_tier = logic_inventory_array[ruleset_id, 1]  # Column 1 stores tier info
 
+                    # Calculate energy to add
+                    base_energy = logic_base_energy_array[ruleset_id]  # Use the NumPy array
+                    tier_bonus = (logic_tier - 1)  # Each tier beyond 1 adds 1 extra energy
+
                     # Ensure energy scales correctly with tier
-                    energy_to_add = 1 + (logic_tier - 1)  # Base 1 energy, and additional energy from tier level
+                    energy_to_add = base_energy + tier_bonus
 
                     # Update total energy
                     energy_generated += energy_to_add
