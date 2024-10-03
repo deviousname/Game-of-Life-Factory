@@ -239,7 +239,7 @@ class Factory:
         self.logic_id_to_color_index = {logic_id: idx for idx, logic_id in enumerate(logic_ids)}
 
         # Color selection for simulation mode
-        self.selected_color_index = 0  # Start with the first color
+        self.selected_color_index = self.black_index   # Start with the first color
 
         # Ruleset selection
         self.selected_ruleset_name = "Conway"
@@ -500,7 +500,7 @@ class Factory:
                 self.selected_color_index = (self.selected_color_index - 1) % (len(self.colors_list) - 1)
 
         elif event.key == pygame.K_w and self.mode == 'simulation':
-            self.selected_color_index = self.white_index
+            self.selected_color_index = self.black_index
 
         elif event.key == pygame.K_f:
             self.handle_flood_fill()
