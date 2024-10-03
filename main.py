@@ -1354,12 +1354,12 @@ class Factory:
                 for surface in text_surfaces:
                     self.screen.blit(surface, (x, y))
                     x += surface.get_width()
-
-            # Display energy and alive cell counts below the text (both paused and unpaused)
-            bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate + self.bonus_energy_rate)}/s)"
-            bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
-            x = (self.width - bonus_surface.get_width()) // 2
-            self.screen.blit(bonus_surface, (x, 35))  # Adjust y position to not overlap
+            if not self.paused:
+                # Display energy and alive cell counts below the text (both paused and unpaused)
+                bonus_text = f"Energy: {self.format_number(self.bonus)} (+{self.format_number(self.energy_generation_rate + self.bonus_energy_rate)}/s)"
+                bonus_surface = render_text_with_outline(bonus_text, font, (255, 255, 255), (0, 0, 0))
+                x = (self.width - bonus_surface.get_width()) // 2
+                self.screen.blit(bonus_surface, (x, 1))  # Adjust y position to not overlap
 
             instructions = "Tab: Switch Mode | A and D: Change Color | R: Reset | Space: Pause | B: Buy | F: Fill Bucket | N: Notation | I: Info (Stats)"
         else:
