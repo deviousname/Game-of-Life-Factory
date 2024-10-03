@@ -455,156 +455,147 @@ class Factory:
     def handle_events(self):
         """Handle user input events."""
         for event in pygame.event.get():
+            # Handle global events first
             if event.type == pygame.QUIT:
                 self.done = True
                 pygame.quit()
                 exit()
 
+            # Handle keydown events
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    # If in a popup (menu, shop, or info), return to the previous mode
-                    if self.mode in ['menu', 'shop', 'stats']:
-                        self.mode = self.previous_mode
-                        self.paused = True  # Optionally pause the game
-                    else:
-                        # Open the copy/paste seed popup if not already in it
-                        if self.mode != 'menu':
-                            self.previous_mode = self.mode
-                            self.mode = 'menu'
-                            self.paused = True  # Pause when opening the menu
-                        else:
-                            # If already in the menu, close it and return to the previous mode
-                            self.mode = self.previous_mode
-                            self.paused = True
-                            
+                self.handle_keydown(event)
+
+            # Handle mouse events based on mode
             if self.mode == 'menu':
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:  # Left click
-                        mouse_pos = pygame.mouse.get_pos()
-                        if self.copy_button_rect.collidepoint(mouse_pos):
-                            key = serialize_state(self.logic_grid, self.cell_state_grid, self.logic_inventory, self.bonus)
-                            if self.clipboard_available:
-                                pyperclip.copy(key)
-                                print("Seed copied to clipboard.")
-                            else:
-                                print("Clipboard not available.")
-                        if self.paste_button_rect.collidepoint(mouse_pos):
-                            if self.clipboard_available:
-                                try:
-                                    clipboard_content = pyperclip.paste()
-                                    try:
-                                        self.logic_grid, self.cell_state_grid, self.logic_inventory, self.bonus = deserialize_state(clipboard_content, self.grid_size)
-                                        print("Seed loaded from clipboard.")
-                                    except Exception as e:
-                                        print(f"Error loading seed: {e}")
-                                        if clipboard_content.lower() == 'godmode':
-                                            self.generate_state_from_seed(clipboard_content)
-                                        else:
-                                            print("Invalid seed. Cannot load game state.")
-                                except Exception as e:
-                                    print(f"Error accessing clipboard: {e}")
-                            else:
-                                print("Clipboard not available.")
-
+                self.handle_menu_mouse_event(event)
             elif self.mode == 'shop':
-                if event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_b, pygame.K_ESCAPE):
-                        self.mode = self.previous_mode  # Return to the correct mode
-                    elif event.key == pygame.K_n:
-                        self.scientific_notation = not self.scientific_notation  # Toggle notation
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    mouse_pos = pygame.mouse.get_pos()
-                    for button_rect, logic_id, quantity in self.buy_buttons:
-                        if button_rect.collidepoint(mouse_pos):
-                            max_possible = self.calculate_max_purchase(logic_id)
-                            total_cells = self.grid_size[0] * self.grid_size[1]
-                            tier = self.logic_inventory[logic_id]['tier']
-                            price_per_block = self.get_logic_price(logic_id)
-
-                            if quantity == 'MAX':
-                                # Purchase as many blocks as possible up to filling the grid
-                                max_to_buy = min(max_possible, total_cells - self.logic_inventory[logic_id]['count'])
-                            else:
-                                # Purchase 1 or 25 blocks as requested
-                                max_to_buy = min(quantity, max_possible)
-
-                            total_cost = price_per_block * max_to_buy
-
-                            # Ensure the player has enough energy
-                            if self.bonus >= total_cost:
-                                # Deduct the cost
-                                self.bonus -= total_cost
-
-                                # Add blocks to inventory
-                                self.logic_inventory[logic_id]['count'] += max_to_buy
-
-                                # Print confirmation
-                                print(f"Purchased {max_to_buy} blocks of {ID_RULESETS[logic_id]} (Tier {self.logic_inventory[logic_id]['tier']})")
-
-                                # Check for tier upgrade after purchase
-                                self.check_for_tier_upgrade(logic_id)
-                            else:
-                                # Not enough energy
-                                print("Not enough energy to purchase.")
-                            break
-
+                self.handle_shop_mouse_event(event)
             else:
-                # Handle events in other modes
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_TAB:
-                        self.mode = 'simulation' if self.mode == 'building' else 'building'
-                    elif event.key == pygame.K_SPACE and self.mode == 'simulation':
-                        self.paused = not self.paused
-                    elif event.key == pygame.K_d:
-                        if self.mode == 'building':
-                            self.cycle_ruleset(forward=True)
-                        elif self.mode == 'simulation':
-                            self.selected_color_index = (self.selected_color_index + 1) % (len(self.colors_list) - 1)
-                    elif event.key == pygame.K_a:
-                        if self.mode == 'building':
-                            self.cycle_ruleset(forward=False)
-                        elif self.mode == 'simulation':
-                            self.selected_color_index = (self.selected_color_index - 1) % (len(self.colors_list) - 1)
-                    
-                    # **Add the 'w' key handling here**
-                    elif event.key == pygame.K_w:
-                        if self.mode == 'simulation':
-                            self.selected_color_index = self.white_index
-                            #print("Selected color set to White.")
-                            
-                    elif event.key == pygame.K_f:
-                        self.handle_flood_fill()
-                    elif event.key == pygame.K_r:
-                        self.reset_game()
-                    elif event.key == pygame.K_b:
-                        # Save the current mode before switching to the buy menu
-                        self.previous_mode = self.mode
-                        self.mode = 'shop'
-                    elif event.key == pygame.K_n:
-                        self.scientific_notation = not self.scientific_notation  # Toggle notation
-                    elif event.key == pygame.K_i:
-                        if self.mode == 'stats':
-                            self.mode = self.previous_mode  # Return to previous mode
-                        else:
-                            self.previous_mode = self.mode
-                            self.mode = 'stats'
-                    elif event.key == pygame.K_t:
-                        # Increment tier of the selected logic block
-                        self.logic_inventory[self.selected_ruleset_id]['tier'] += 1
-                        print(f"{ID_RULESETS[self.selected_ruleset_id]} tier increased to {self.logic_inventory[self.selected_ruleset_id]['tier']}")
+                self.handle_general_mouse_event(event)
 
-                    elif event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
-                        self.undo_action()
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button <= 3:
-                        self.mouse_buttons[event.button - 1] = True
-                    self.handle_mouse_event()
-                elif event.type == pygame.MOUSEBUTTONUP:
-                    if event.button <= 3:
-                        self.mouse_buttons[event.button - 1] = False
-                elif event.type == pygame.MOUSEMOTION:
-                    if any(self.mouse_buttons):
-                        self.handle_mouse_event()
+    def handle_keydown(self, event):
+        """Handle keydown events based on the current mode."""
+        if event.key == pygame.K_ESCAPE:
+            self.handle_escape_key()
+
+        elif event.key == pygame.K_i:
+            self.toggle_info_panel()
+
+        elif event.key == pygame.K_TAB:
+            self.toggle_mode('simulation', 'building')
+
+        elif event.key == pygame.K_SPACE and self.mode == 'simulation':
+            self.paused = not self.paused
+
+        elif event.key == pygame.K_d:
+            if self.mode == 'building':
+                self.cycle_ruleset(forward=True)
+            elif self.mode == 'simulation':
+                self.selected_color_index = (self.selected_color_index + 1) % (len(self.colors_list) - 1)
+
+        elif event.key == pygame.K_a:
+            if self.mode == 'building':
+                self.cycle_ruleset(forward=False)
+            elif self.mode == 'simulation':
+                self.selected_color_index = (self.selected_color_index - 1) % (len(self.colors_list) - 1)
+
+        elif event.key == pygame.K_w and self.mode == 'simulation':
+            self.selected_color_index = self.white_index
+
+        elif event.key == pygame.K_f:
+            self.handle_flood_fill()
+
+        elif event.key == pygame.K_r:
+            self.reset_game()
+
+        elif event.key == pygame.K_b:
+            self.toggle_shop()
+
+        elif event.key == pygame.K_n:
+            self.scientific_notation = not self.scientific_notation
+
+        elif event.key == pygame.K_t:
+            self.increment_selected_logic_tier()
+
+        elif event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.undo_action()
+
+    def handle_escape_key(self):
+        """Handle the escape key behavior."""
+        if self.mode in ['menu', 'shop', 'stats']:
+            self.close_current_menu()
+        else:
+            self.open_menu('menu')  # Open copy/paste menu when no other menu is open
+            
+    def close_current_menu(self):
+        """Close the current menu and return to the previous mode."""
+        if self.mode in ['menu', 'shop', 'stats']:
+            self.mode = self.previous_mode  # Go back to the previous mode
+            self.paused = True  # Keep the game paused when exiting a menu
+
+    def open_menu(self, new_mode):
+        """Open a new menu, saving the current mode."""
+        if self.mode not in ['menu', 'shop', 'stats']:
+            self.previous_mode = self.mode  # Save the current mode before switching
+        self.mode = new_mode
+        self.paused = True  # Pause the game when opening a menu
+    
+    def toggle_info_panel(self):
+        """Toggle the stats (info) panel with the 'i' key."""
+        if self.mode == 'stats':
+            self.close_current_menu()  # Close stats and return to previous mode
+        else:
+            if self.mode not in ['menu', 'shop', 'stats']:
+                self.previous_mode = self.mode  # Save the current mode
+            self.mode = 'stats'  # Open the stats panel without changing the game mode
+            self.paused = True
+
+    def toggle_mode(self, mode1, mode2):
+        """Toggle between two modes (e.g., 'simulation' and 'building')."""
+        self.mode = mode1 if self.mode == mode2 else mode2
+
+    def toggle_shop(self):
+        """Toggle the shop mode."""
+        if self.mode == 'shop':
+            self.close_current_menu()  # Close shop and return to previous mode
+        else:
+            self.open_menu('shop')
+
+    def increment_selected_logic_tier(self):
+        """Increase the tier of the selected logic block."""
+        self.logic_inventory[self.selected_ruleset_id]['tier'] += 1
+        print(f"{ID_RULESETS[self.selected_ruleset_id]} tier increased to {self.logic_inventory[self.selected_ruleset_id]['tier']}")
+
+    def handle_menu_mouse_event(self, event):
+        """Handle mouse events in menu mode."""
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left click
+            mouse_pos = pygame.mouse.get_pos()
+            if self.copy_button_rect.collidepoint(mouse_pos):
+                self.copy_seed()
+            elif self.paste_button_rect.collidepoint(mouse_pos):
+                self.paste_seed()
+
+    def handle_shop_mouse_event(self, event):
+        """Handle mouse events in shop mode."""
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left click
+            mouse_pos = pygame.mouse.get_pos()
+            for button_rect, logic_id, quantity in self.buy_buttons:
+                if button_rect.collidepoint(mouse_pos):
+                    self.purchase_logic_block(logic_id, quantity)
+                    break
+
+    def handle_general_mouse_event(self, event):
+        """Handle general mouse events."""
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button <= 3:
+                self.mouse_buttons[event.button - 1] = True
+            self.handle_mouse_event()
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button <= 3:
+                self.mouse_buttons[event.button - 1] = False
+        elif event.type == pygame.MOUSEMOTION:
+            if any(self.mouse_buttons):
+                self.handle_mouse_event()
 
     def calculate_max_purchase(self, logic_id):
         """Calculate the maximum number of tiles the player can buy for a logic type."""
@@ -1235,17 +1226,19 @@ class Factory:
             self.draw_game()
             self.draw_shop()
         elif self.mode == 'stats':
+            # Draw stats popup over the current game screen
             self.draw_game()
             self.draw_stats()
         else:
+            # Draw the grid in either building or simulation mode
             self.draw_game()
-            
+
     def draw_game(self):
         """Draw the game grid and UI based on the current mode."""
         # Decide which mode to use for drawing the grid
         if self.mode in ['building', 'simulation']:
             mode_to_draw = self.mode
-        elif self.mode in ['shop', 'menu']:
+        elif self.mode in ['shop', 'menu', 'stats']:
             mode_to_draw = self.previous_mode
         else:
             mode_to_draw = self.mode  # default
@@ -1446,7 +1439,7 @@ class Factory:
 
     def draw_stats(self):
         """Draw the stats popup over the current game screen."""
-        # Draw the background grid from the current mode
+        # Draw the background grid from the previous mode
         self.draw_game()
 
         # Font for drawing text
@@ -1455,7 +1448,7 @@ class Factory:
 
         # Get defense and offense counts
         defense, offense = self.calculate_physical_defense_and_offense()
-        
+
         # Define the stats to be displayed
         stat_items = [
             f"Energy: {self.format_number(self.bonus)}",
@@ -1494,7 +1487,7 @@ class Factory:
         # Count colors and map to elements
         self.tally_colors()  # Only count colors when opening the info tab
         total_living_cells = np.sum(self.color_counts)
-        
+
         # Display each elemental affinity with color
         for idx, count in enumerate(self.color_counts):
             element_name = ELEMENTAL_NAMES[idx]
@@ -1508,7 +1501,8 @@ class Factory:
         # Instructions to close stats
         instructions = "Press 'I' to close stats."
         instructions_surface = font.render(instructions, True, (255, 255, 255))
-        instructions_rect = instructions_surface.get_rect(center=(self.width // 2, box_y + int(box_height*.96)))
+        instructions_rect = instructions_surface.get_rect(center=(self.width // 2, box_y + int(box_height * .96)))
+        self.screen.blit(instructions_surface, instructions_rect)
         self.screen.blit(instructions_surface, instructions_rect)
 
 class TextInputBox:
