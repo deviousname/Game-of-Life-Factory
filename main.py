@@ -159,10 +159,10 @@ def restructure_colors(colors_list):
 class Factory:
     def __init__(
         self,
-        grid_size=(64, 128),
-        cell_size=16,
-        margin=2,
-        n_colors=255,
+        grid_size=(50, 100),
+        cell_size=20,
+        margin=5,
+        n_colors=64,
         window_title="Factory View",
         fullscreen=False, # True is buggy, scaling and text alignment issues
         fps_drawing=60,  # FPS for rendering the screen
