@@ -25,7 +25,7 @@ The core challenge lies in balancing your resources (energy) and strategically p
 - **A / D:** Cycle through logic blocks or colors.
 - **B:** Open the shop to buy new logic blocks or upgrade existing ones.
 - **R:** Reset the current grid.
-- **F:** Fill a selected area with the currently selected logic block.
+- **F:** Fill a selected area with the currently selected logic block or color.
 - **N:** Toggle between scientific and regular notation for energy values.
 - **I:** Toggle the stats panel to view energy, diversity, and more.
 - **Space:** Pause or resume the simulation.
