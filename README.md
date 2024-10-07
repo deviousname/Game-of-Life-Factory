@@ -2,7 +2,7 @@
 
 # Cellular Automata Factory View
 ![Game Screenshot](https://raw.githubusercontent.com/deviousname/Game-of-Life-Factory/main/feedback.png)
-
+![Game Screenshot](https://raw.githubusercontent.com/deviousname/Game-of-Life-Factory/main/anim1.gif)
 
 ## Overview
 
