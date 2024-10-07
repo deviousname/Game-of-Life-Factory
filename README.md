@@ -4,59 +4,35 @@
 ![Game Screenshot](https://raw.githubusercontent.com/deviousname/Game-of-Life-Factory/main/feedback.png)
 ![Game Screenshot](https://raw.githubusercontent.com/deviousname/Game-of-Life-Factory/main/anim1.gif)
 
+---
+
 ## Overview
 
-This game is a cellular automaton simulation where you build and manipulate grids of cells governed by different rulesets. Players can switch between **building** and **simulation** modes, modify rulesets, manage a logic block inventory, generate energy, and unlock upgrades. Cell diversity and elemental affinities unlock powerful bonuses, making strategic design crucial.
+**Game of Life Factory** is an interactive game that combines the classic **Conway's Game of Life** with resource management and strategy elements. Players can place cells on a grid, assign different logic rulesets to each cell, and observe the dynamic behavior as the simulation runs. The game offers multiple rulesets like **Conway's Life**, **HighLife**, **Maze**, and others, which provide different patterns of cell birth and survival. You can switch between **Build Mode** (where you configure and place cells) and **Simulation Mode** (where cells evolve based on the selected rules).
 
-## Key Features
-- **Modes**: Toggle between building and simulation modes with `TAB`. Design in **building mode**, and see cells come to life in **simulation mode**.
-- **Rulesets**: Multiple rulesets like **Conway's Life**, **HighLife**, and **Replicator** define cell behavior. Customize and upgrade rulesets for stronger effects.
-- **Elemental Affinities**: Cells have elemental colors (Fire, Water, Bio, etc.), and their balance grants bonuses. Track **offense** (new cells) and **defense** (static cells) for strategic gains.
-- **Energy System**: Cells generate energy based on their activity, which you can use to buy new blocks or upgrade existing ones.
-- **Diversity Bonus**: Having a diverse array of cells grants bonus energy. A well-balanced grid is key to maximizing your efficiency.
+The core challenge lies in balancing your resources (energy) and strategically placing logic blocks to create sustainable and interesting patterns. As cells survive and reproduce, they generate energy that can be used to buy more logic blocks or upgrade existing ones. Players can pause the game, paint live cells, and explore various strategies for creating self-sustaining cell structures.
+
+### Features:
+- **Multiple Rulesets:** Choose from various rulesets such as **Conway**, **HighLife**, **Day & Night**, and more.
+- **Resource Management:** Accumulate energy from cell growth and spend it to buy or upgrade logic blocks.
+- **Interactive Grid:** Switch between building and simulating cell patterns, and visually see the impact of your setup.
+- **Customizable Setup:** Use different colors and patterns to create unique visual and strategic experiences.
+- **Clipboard Integration:** Save and load game states using generated seeds.
 
 ## Controls
 
-- **`TAB`**: Switch between building and simulation modes.
-- **`A`/`D`**: Cycle through rulesets (building) or colors (simulation).
-- **`B`**: Open the shop to buy/upgrade logic blocks with energy.
-- **`SPACE`**: Pause/unpause the simulation.
-- **`F`**: Flood-fill tool for rapid cell placement.
-- **`N`**: Toggle scientific notation for large numbers.
-
-## Rulesets
-
-Rulesets control how cells live, die, or reproduce based on their neighbors:
-
-- **Conway**: Classic life rules (survive with 2-3 neighbors, born with 3).
-- **HighLife**: Cells are born with 3 or 6 neighbors.
-- **Day & Night**: Complex survival and birth conditions.
-- **Void**: Clears a space of all cells.
-- Other unique rulesets include **Seeds**, **Life Without Death**, **Maze**, **Gnarl**, and **Replicator**.
-
-## Element Affinities & Bonuses
-
-Cells are linked to elemental colors (e.g., Fire, Water, Ice). Track these affinities to gain energy bonuses. Diverse or balanced cell arrangements grant extra energy through a **diversity bonus**.
-
-- **Offense**: Active cell creation boosts offense.
-- **Defense**: Static living cells boost defense.
-- **Elemental Affinity**: Each color corresponds to an element. Maintaining a mix of elemental cells increases your bonus.
-
-## Shop & Upgrades
-
-- Use **energy** generated from living cells to buy new logic blocks or upgrade existing ones.
-- Higher-tier blocks have stronger effects and cost more energy.
-- Some blocks (like Conway and Void) are infinite, while others need to be purchased.
-
-## Energy Generation
-
-Your grid's cells continuously generate energy in simulation mode. This energy can be spent in the shop to expand or upgrade your inventory.
-
-- **Diversity Bonus**: Maintaining color diversity increases your energy output.
-- **Scientific Notation**: Toggle large-number display using `N`.
-
-## Clipboard Functionality
-
-You can copy and paste game states via the clipboard, allowing you to save your progress or share designs with others.
-
+- **Tab:** Switch between **Build Mode** and **Simulation Mode**.
+- **A / D:** Cycle through logic blocks or colors.
+- **B:** Open the shop to buy new logic blocks or upgrade existing ones.
+- **R:** Reset the current grid.
+- **F:** Fill a selected area with the currently selected logic block.
+- **N:** Toggle between scientific and regular notation for energy values.
+- **I:** Toggle the stats panel to view energy, diversity, and more.
+- **Space:** Pause or resume the simulation.
+- **Ctrl + Z:** Undo the last action.
+- **C:** Hold to copy a rectangular section of the grid.
+- **V:** Paste the previously copied grid section.
+- **Mouse Left-Click:** Place logic blocks or paint live cells, depending on the mode.
+- **Mouse Right-Click:** Erase logic blocks or cells.
+  
 ---
