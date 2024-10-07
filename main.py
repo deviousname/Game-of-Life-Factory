@@ -140,7 +140,6 @@ class Factory:
 
         self.width = self.cell_size * self.grid_size[1] + self.margin * (self.grid_size[1] + 1)
         self.height = self.cell_size * self.grid_size[0] + self.margin * (self.grid_size[0] + 1) + 30
-        
 
     def setup_colors(self):
         """Generate and restructure colors for the grid."""
@@ -154,13 +153,28 @@ class Factory:
         restructured_colors_list = self.restructure_colors(self.colors_list)
         self.colors_array = np.array(restructured_colors_list, dtype=np.uint8)
 
+    def adjust_color_intensity(self, color, factor=0.9):
+        """
+        Adjust the intensity of the color by blending it towards white.
+        Factor < 1.0 results in lighter colors, factor > 1.0 makes it darker.
+        """
+        return tuple(int(c * factor + ((127+64) * (1 - factor))) for c in color)
+
     def setup_logic_colors(self):
-        """Set up logic color mapping based on rulesets."""
+        """Set up logic color mapping based on rulesets with intensity adjustments."""
         self.logic_colors_list = {}
         logic_names = [name for name in RULESETS.keys() if name != 'Void']
         for idx, logic_name in enumerate(logic_names):
             logic_id = RULESET_IDS[logic_name]
-            self.logic_colors_list[logic_id] = PRIMARY_COLORS[idx]
+            base_color = PRIMARY_COLORS[idx]
+
+            # Adjust color intensity (we can adjust Conway or any other color specifically)
+            if logic_name == "Conway":
+                adjusted_color = self.adjust_color_intensity(base_color, factor=0.5)  # Lighter Conway
+            else:
+                adjusted_color = self.adjust_color_intensity(base_color, factor=0.5)  # Slightly lighter others
+            
+            self.logic_colors_list[logic_id] = adjusted_color
 
         void_logic_id = RULESET_IDS['Void']
         self.logic_colors_list[void_logic_id] = (127, 127, 127)  # Dark grey for 'Void'
@@ -1547,17 +1561,54 @@ class Factory:
             surface = self.grid_surface
         else:
             surface = self.screen
-        
+
+        # Add an additional surface for transparent overlays
+        overlay_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+
         for row in range(self.grid_size[0]):
             for col in range(self.grid_size[1]):
                 x, y = self.calculate_grid_cell_position(col, row)
                 color = self.get_cell_color(mode_to_draw, row, col)
+
+                # Draw the main grid (either build or simulation)
                 pygame.draw.rect(surface, color, (x, y, self.cell_size, self.cell_size))
-        
+
+                # Add logic overlay if in simulation mode
+                if mode_to_draw == 'simulation':
+                    ruleset_id = self.logic_grid[row, col]
+                    if ruleset_id != RULESET_IDS["Void"]:  # Only draw if it's not Void
+                        border_color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))  # Default to gray if not found
+                        border_color_with_alpha = (*border_color, 100)  # Set alpha for transparency
+                        pygame.draw.rect(
+                            overlay_surface, 
+                            border_color_with_alpha, 
+                            (x, y, self.cell_size, self.cell_size), 
+                            width=2  # Draw a border with thickness 2
+                        )
+                
+                # Add simulation overlay if in build mode
+                elif mode_to_draw == 'building':
+                    cell_color_index = self.cell_state_grid[row, col]
+                    if cell_color_index != self.dead_cell_index:  # Only show living cells
+                        living_cell_color = self.colors_array[cell_color_index]
+                        border_color_with_alpha = (*living_cell_color, 120)  # Set alpha for transparency
+
+                        # Draw a transparent border to indicate living cells in the sim
+                        pygame.draw.rect(
+                            overlay_surface, 
+                            border_color_with_alpha, 
+                            (x, y, self.cell_size, self.cell_size), 
+                            width=2  # Draw a border around the cell
+                        )
+
+        # If fullscreen, blit the surface, otherwise blit overlay on top of the grid
         if self.fullscreen:
             grid_x = (self.screen.get_width() - self.grid_surface.get_width()) // 2
             grid_y = (self.screen.get_height() - self.grid_surface.get_height()) // 2
             self.screen.blit(self.grid_surface, (grid_x, grid_y))
+            self.screen.blit(overlay_surface, (grid_x, grid_y))  # Overlay the semi-transparent layer
+        else:
+            self.screen.blit(overlay_surface, (0, 0))  # Overlay for windowed mode
 
     def calculate_grid_cell_position(self, col, row):
         """Calculate the pixel position of the grid cell for drawing."""
