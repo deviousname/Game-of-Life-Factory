@@ -511,22 +511,22 @@ class Factory:
 
     def copy(self):
         """ Handle selecting a rectangular area when holding 'c' and copying the cells. """
-        print("Starting copy process...")
+        #print("Starting copy process...")
         corner1, corner2 = self.zone(pygame.K_c)  # User selects two corners by holding 'c'
-        print(f"Selected corners: {corner1}, {corner2}")
+        #print(f"Selected corners: {corner1}, {corner2}")
         
         # Copy the cells depending on the current mode
         if self.mode == 'building':
-            print("Copying in 'building' mode...")
+            #print("Copying in 'building' mode...")
             self.copy_cells(corner1, corner2, self.logic_grid, 'building')
         elif self.mode == 'simulation':
-            print("Copying in 'simulation' mode...")
+            #print("Copying in 'simulation' mode...")
             self.copy_cells(corner1, corner2, self.cell_state_grid, 'simulation')
-        print("Copy process completed.")
+        #print("Copy process completed.")
 
     def copy_cells(self, corner1, corner2, grid, mode):
         """ Copy the cells within the rectangle defined by corner1 and corner2. """
-        print(f"Copying cells from corners {corner1} to {corner2} in {mode} mode...")
+        #print(f"Copying cells from corners {corner1} to {corner2} in {mode} mode...")
         x1, y1 = min(corner1[0], corner2[0]), min(corner1[1], corner2[1])
         x2, y2 = max(corner1[0], corner2[0]), max(corner1[1], corner2[1])
 
@@ -538,32 +538,32 @@ class Factory:
                 row_data.append(grid[r][c])
             copied_cells.append(row_data)
 
-        print(f"Copied cells: {copied_cells}")
+        #print(f"Copied cells: {copied_cells}")
 
         # Store in the correct memory for mode
         if mode == 'building':
-            print("Storing copied cells for building mode...")
+            #print("Storing copied cells for building mode...")
             self.building_copied_cells = copied_cells
             self.building_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
         elif mode == 'simulation':
-            print("Storing copied cells for simulation mode...")
+            #print("Storing copied cells for simulation mode...")
             self.sim_copied_cells = copied_cells
             self.sim_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
 
     def paste(self):
         """ Handle pasting the cells at the new location when pressing 'v'. """
-        print("Starting paste process...")
+        #print("Starting paste process...")
         target_corner = self.xy()  # Get mouse position as grid coordinates
-        print(f"Target corner for paste: {target_corner}")
+        #print(f"Target corner for paste: {target_corner}")
 
         # Paste the cells depending on the current mode
         if self.mode == 'building':
-            print("Pasting in 'building' mode...")
+            #print("Pasting in 'building' mode...")
             self.paste_cells(target_corner, self.building_copied_cells, self.building_copy_center, self.logic_grid)
         elif self.mode == 'simulation':
-            print("Pasting in 'simulation' mode...")
+            #print("Pasting in 'simulation' mode...")
             self.paste_cells(target_corner, self.sim_copied_cells, self.sim_copy_center, self.cell_state_grid)
-        print("Paste process completed.")
+        #print("Paste process completed.")
 
     def paste_cells(self, target_corner, copied_cells, copy_center, grid):
         """ Paste the copied cells at the new location centered around target_corner. """
@@ -571,7 +571,7 @@ class Factory:
             print("No cells to paste.")
             return  # No cells to paste
 
-        print(f"Pasting cells centered at {target_corner}...")
+        #print(f"Pasting cells centered at {target_corner}...")
         
         # The grid location to center the paste
         target_col, target_row = target_corner
@@ -589,7 +589,7 @@ class Factory:
                 # Make sure we are not out of bounds
                 if 0 <= target_r < self.grid_size[0] and 0 <= target_c < self.grid_size[1]:
                     grid[target_r][target_c] = copied_cells[r][c]
-        print(f"Pasting completed.")
+        #print(f"Pasting completed.")
 
     def xy(self):
         """
@@ -603,7 +603,7 @@ class Factory:
             tuple: (grid_x, grid_y), the x and y coordinates in the grid.
         """
         x, y = pygame.mouse.get_pos()
-        print(f"Mouse position: {x}, {y}")
+        #print(f"Mouse position: {x}, {y}")
 
         # Convert pixel coordinates to grid coordinates
         grid_x = (x - self.margin) // (self.cell_size + self.margin)
@@ -613,7 +613,7 @@ class Factory:
         grid_x = max(0, min(grid_x, self.grid_size[1] - 1))  # grid_size[1] is the number of columns
         grid_y = max(0, min(grid_y, self.grid_size[0] - 1))  # grid_size[0] is the number of rows
 
-        print(f"Converted mouse position to grid coordinates: {grid_x}, {grid_y}")
+        #print(f"Converted mouse position to grid coordinates: {grid_x}, {grid_y}")
         return grid_x, grid_y
 
     def zone(self, key):
@@ -631,17 +631,17 @@ class Factory:
             tuple: ((x1, y1), (x2, y2)), two corner coordinates in grid format.
         """
         # First corner (start point of the rectangular selection)
-        print("Waiting for first corner selection...")
+        #print("Waiting for first corner selection...")
         x1, y1 = self.xy()  # Get the current mouse position in grid coordinates
-        print(f"First corner selected at: {x1}, {y1}")
+        #print(f"First corner selected at: {x1}, {y1}")
         
         # Wait until the user releases the key to capture the second corner
-        print(f"Waiting for the release of key {key} to capture the second corner...")
+        #print(f"Waiting for the release of key {key} to capture the second corner...")
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.KEYUP and event.key == key:
                     # Key has been released, break the loop to capture the second corner
-                    print("Key released.")
+                    #print("Key released.")
                     break
             else:
                 continue
@@ -649,7 +649,7 @@ class Factory:
 
         # Second corner (end point of the rectangular selection)
         x2, y2 = self.xy()  # Get the mouse position again after key release
-        print(f"Second corner selected at: {x2}, {y2}")
+        #print(f"Second corner selected at: {x2}, {y2}")
 
         # Return the two corner coordinates
         return (x1, y1), (x2, y2)
