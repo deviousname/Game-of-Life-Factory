@@ -127,6 +127,7 @@ class Factory:
             self.screen = pygame.display.set_mode((self.width, self.height))
         
         pygame.display.set_caption(self.window_title)
+        self.grid_surface = pygame.Surface((self.width, self.height))
 
     def adjust_for_fullscreen(self):
         """Adjust grid size and display for fullscreen mode."""
@@ -139,7 +140,7 @@ class Factory:
 
         self.width = self.cell_size * self.grid_size[1] + self.margin * (self.grid_size[1] + 1)
         self.height = self.cell_size * self.grid_size[0] + self.margin * (self.grid_size[0] + 1) + 30
-        self.grid_surface = pygame.Surface((self.width, self.height))
+        
 
     def setup_colors(self):
         """Generate and restructure colors for the grid."""
@@ -325,7 +326,6 @@ class Factory:
 
         return logic_grid, cell_state_grid, logic_inventory, energy
 
-
     def preprocess_rulesets(self):
         """Preprocess rulesets into Numba-compatible arrays."""
         num_rulesets = len(RULESETS)
@@ -502,6 +502,157 @@ class Factory:
 
         elif event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
             self.undo_action()
+
+        elif event.key == pygame.K_c:
+            self.copy()
+
+        elif event.key == pygame.K_v:
+            self.paste()
+
+    def copy(self):
+        """ Handle selecting a rectangular area when holding 'c' and copying the cells. """
+        print("Starting copy process...")
+        corner1, corner2 = self.zone(pygame.K_c)  # User selects two corners by holding 'c'
+        print(f"Selected corners: {corner1}, {corner2}")
+        
+        # Copy the cells depending on the current mode
+        if self.mode == 'building':
+            print("Copying in 'building' mode...")
+            self.copy_cells(corner1, corner2, self.logic_grid, 'building')
+        elif self.mode == 'simulation':
+            print("Copying in 'simulation' mode...")
+            self.copy_cells(corner1, corner2, self.cell_state_grid, 'simulation')
+        print("Copy process completed.")
+
+    def copy_cells(self, corner1, corner2, grid, mode):
+        """ Copy the cells within the rectangle defined by corner1 and corner2. """
+        print(f"Copying cells from corners {corner1} to {corner2} in {mode} mode...")
+        x1, y1 = min(corner1[0], corner2[0]), min(corner1[1], corner2[1])
+        x2, y2 = max(corner1[0], corner2[0]), max(corner1[1], corner2[1])
+
+        # Store the copied cells in the appropriate memory based on the mode
+        copied_cells = []  # Temporary storage for copied cells
+        for r in range(y1-1, y2):
+            row_data = []
+            for c in range(x1, x2 + 1):
+                row_data.append(grid[r][c])
+            copied_cells.append(row_data)
+
+        print(f"Copied cells: {copied_cells}")
+
+        # Store in the correct memory for mode
+        if mode == 'building':
+            print("Storing copied cells for building mode...")
+            self.building_copied_cells = copied_cells
+            self.building_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
+        elif mode == 'simulation':
+            print("Storing copied cells for simulation mode...")
+            self.sim_copied_cells = copied_cells
+            self.sim_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
+
+    def paste(self):
+        """ Handle pasting the cells at the new location when pressing 'v'. """
+        print("Starting paste process...")
+        target_corner = self.xy()  # Get mouse position as grid coordinates
+        print(f"Target corner for paste: {target_corner}")
+
+        # Paste the cells depending on the current mode
+        if self.mode == 'building':
+            print("Pasting in 'building' mode...")
+            self.paste_cells(target_corner, self.building_copied_cells, self.building_copy_center, self.logic_grid)
+        elif self.mode == 'simulation':
+            print("Pasting in 'simulation' mode...")
+            self.paste_cells(target_corner, self.sim_copied_cells, self.sim_copy_center, self.cell_state_grid)
+        print("Paste process completed.")
+
+    def paste_cells(self, target_corner, copied_cells, copy_center, grid):
+        """ Paste the copied cells at the new location centered around target_corner. """
+        if not copied_cells:
+            print("No cells to paste.")
+            return  # No cells to paste
+
+        print(f"Pasting cells centered at {target_corner}...")
+        
+        # The grid location to center the paste
+        target_col, target_row = target_corner
+
+        # Calculate the top-left corner based on the center of the copied area
+        paste_start_row = target_row - (len(copied_cells) // 2)
+        paste_start_col = target_col - (len(copied_cells[0]) // 2)
+
+        # Paste the copied cells relative to the calculated top-left corner
+        for r in range(len(copied_cells)):
+            for c in range(len(copied_cells[0])):
+                target_r = paste_start_row + r
+                target_c = paste_start_col + c
+
+                # Make sure we are not out of bounds
+                if 0 <= target_r < self.grid_size[0] and 0 <= target_c < self.grid_size[1]:
+                    grid[target_r][target_c] = copied_cells[r][c]
+        print(f"Pasting completed.")
+
+    def xy(self):
+        """
+        Get the current mouse position and convert it to grid coordinates.
+        
+        This function calculates the grid cell the mouse is hovering over by taking into account 
+        the margin and the size of each cell in the grid. It ensures the returned coordinates 
+        are valid within the grid's dimensions.
+        
+        Returns:
+            tuple: (grid_x, grid_y), the x and y coordinates in the grid.
+        """
+        x, y = pygame.mouse.get_pos()
+        print(f"Mouse position: {x}, {y}")
+
+        # Convert pixel coordinates to grid coordinates
+        grid_x = (x - self.margin) // (self.cell_size + self.margin)
+        grid_y = (y - self.margin) // (self.cell_size + self.margin)
+
+        # Clamp the coordinates to ensure they are within the grid's bounds
+        grid_x = max(0, min(grid_x, self.grid_size[1] - 1))  # grid_size[1] is the number of columns
+        grid_y = max(0, min(grid_y, self.grid_size[0] - 1))  # grid_size[0] is the number of rows
+
+        print(f"Converted mouse position to grid coordinates: {grid_x}, {grid_y}")
+        return grid_x, grid_y
+
+    def zone(self, key):
+        """
+        Capture two corner coordinates by holding a key, typically used to define a rectangular area.
+        
+        The function tracks the mouse position when the user holds a specified key (`key` argument). 
+        When the key is released, the current mouse position is captured, allowing for the 
+        selection of a rectangular area between two corners (start and end points).
+
+        Args:
+            key (int): The key to be held down, such as `pygame.K_c` for copying.
+
+        Returns:
+            tuple: ((x1, y1), (x2, y2)), two corner coordinates in grid format.
+        """
+        # First corner (start point of the rectangular selection)
+        print("Waiting for first corner selection...")
+        x1, y1 = self.xy()  # Get the current mouse position in grid coordinates
+        print(f"First corner selected at: {x1}, {y1}")
+        
+        # Wait until the user releases the key to capture the second corner
+        print(f"Waiting for the release of key {key} to capture the second corner...")
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.KEYUP and event.key == key:
+                    # Key has been released, break the loop to capture the second corner
+                    print("Key released.")
+                    break
+            else:
+                continue
+            break
+
+        # Second corner (end point of the rectangular selection)
+        x2, y2 = self.xy()  # Get the mouse position again after key release
+        print(f"Second corner selected at: {x2}, {y2}")
+
+        # Return the two corner coordinates
+        return (x1, y1), (x2, y2)
 
     def handle_escape_key(self):
         """Handle the escape key behavior."""
@@ -734,7 +885,6 @@ class Factory:
                                 if self.logic_grid[new_r, new_c] == initial_value:
                                     locs.add((new_r, new_c))
                     else:
-                        #print("Not enough blocks of this logic type.")
                         return
                     
     def calculate_physical_defense_and_offense(self):
@@ -756,9 +906,6 @@ class Factory:
 
         # Offense is the number of active (changing) cells, which is total living cells minus static cells
         active_cells_count = total_living_cells - static_cells_count
-
-        # Debugging: Print the number of static and active cells
-        #print(f"Static cells (defense): {static_cells_count}, Active cells (offense): {active_cells_count}, Total living cells: {total_living_cells}")
 
         # Do not update previous_cell_state_grid here; it's updated in the update() method
 
@@ -998,10 +1145,6 @@ class Factory:
                 logic_inventory_array,  # Pass the logic inventory array
                 logic_base_energy_array  # Pass the base energy array here
             )
-
-            # Print debug information for grid update
-            #print(f"Updated cell grid. Births: {births_count}, Core energy generated: {core_energy_generated}")
-            #print(f"Current cell state grid (sample): \n{self.cell_state_grid[:5, :5]}")  # Print a sample of the grid
 
             # Track whether any Tier 2 or higher blocks are contributing to energy generation
             tier_2_or_higher_energy = any(
@@ -1525,7 +1668,19 @@ class Factory:
     def draw_instructions(self):
         """Draw instructions at the bottom of the screen."""
         font = pygame.font.SysFont(None, 32)
-        instructions = "Tab: Switch Mode | A and D: Change Ruleset/Color | B: Buy | R: Reset | F: Fill Bucket | N: Notation | I: Info (Stats)"
+        instructions = (
+            "Tab: Switch Mode | "
+            "A and D: Cycle Color/Logic | "
+            "B: Buy | "
+            "R: Reset Grid | "
+            "F: Fill Bucket | "
+            "N: Notation | "
+            "I: Stats | "
+            "Space: Pause | "
+            "Ctrl Z: Undo | "
+            "C: Copy (drag and release) | "
+            "V: Paste"
+        )
         instructions_surface = self.render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
         self.screen.blit(instructions_surface, (10, self.height - 25))
 
