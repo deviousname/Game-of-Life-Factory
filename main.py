@@ -901,6 +901,12 @@ class Factory:
                     else:
                         return
                     
+    def get_logic_price_at_tier(self, logic_id, tier):
+        """Get the price per block for the logic at a specified tier."""
+        base_price = self.logic_prices[logic_id]
+        price_per_block = base_price * (10 ** (tier - 1))
+        return price_per_block
+
     def calculate_physical_defense_and_offense(self):
         """Calculate physical defense based on static living cells, and offense based on active living cells."""
         # Ensure that we have a previous cell state grid to compare with
@@ -1050,13 +1056,10 @@ class Factory:
 
     def calculate_upgrade_cost(self, logic_id):
         """Calculate the cost of upgrading to the next tier for a specific logic type."""
-        current_tier = self.logic_inventory[logic_id]['tier']
-        price_per_block = self.get_logic_price(logic_id)
+        next_tier = self.logic_inventory[logic_id]['tier'] + 1
         total_cells = self.grid_size[0] * self.grid_size[1]
-        placed_blocks = np.sum(self.logic_grid == logic_id)
-
-        # Increase the cost exponentially as the tier increases
-        upgrade_cost = placed_blocks * price_per_block * current_tier  # Cost increases with the current tier
+        price_per_block_next_tier = self.get_logic_price_at_tier(logic_id, next_tier)
+        upgrade_cost = total_cells * price_per_block_next_tier
         return upgrade_cost
 
     def purchase_logic_block(self, logic_id, quantity):
@@ -1067,15 +1070,19 @@ class Factory:
         max_additional_blocks = total_cells - (placed_blocks + owned_blocks)
 
         if quantity == '+TIER':
+            # Get current and next tier
+            current_tier = self.logic_inventory[logic_id]['tier']
+            next_tier = current_tier + 1
+
             # Calculate the cost to upgrade the tier
-            upgrade_cost = self.calculate_upgrade_cost(logic_id)
+            upgrade_cost = total_cells * self.get_logic_price_at_tier(logic_id, next_tier)
 
             # Check if the player has enough energy for the upgrade
             if self.bonus >= upgrade_cost:
                 # Proceed with the upgrade
                 self.bonus -= upgrade_cost
 
-                # Remove all blocks of the current tier
+                # Remove all blocks of the current logic type from the board
                 removed_blocks_count = 0
                 for row in range(self.grid_size[0]):
                     for col in range(self.grid_size[1]):
@@ -1083,20 +1090,19 @@ class Factory:
                             removed_blocks_count += 1
                             self.logic_grid[row, col] = RULESET_IDS["Void"]
 
-                # Refund based on the removed blocks
-                total_refund = removed_blocks_count * self.get_logic_price(logic_id)
+                # Refund based on the removed blocks at the current tier's price
+                total_refund = removed_blocks_count * self.get_logic_price_at_tier(logic_id, current_tier)
                 self.bonus += total_refund
 
                 # Upgrade tier and reset the block count
                 self.logic_inventory[logic_id]['count'] = 0
-                self.logic_inventory[logic_id]['tier'] += 1
+                self.logic_inventory[logic_id]['tier'] = next_tier
 
-                print(f"Upgraded {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier']}.")
+                print(f"Upgraded {ID_RULESETS[logic_id]} to Tier {next_tier}.")
                 print(f"Refunded {self.format_number(total_refund)} energy for removed blocks.")
             else:
-                print(f"Not enough energy to upgrade {ID_RULESETS[logic_id]} to Tier {self.logic_inventory[logic_id]['tier'] + 1}. "
+                print(f"Not enough energy to upgrade {ID_RULESETS[logic_id]} to Tier {next_tier}. "
                       f"Required: {self.format_number(upgrade_cost)}, Available: {self.format_number(self.bonus)}")
-
         else:
             # Handle regular block purchasing
             quantity = min(quantity, max_additional_blocks)
@@ -1112,7 +1118,8 @@ class Factory:
                 self.logic_inventory[logic_id]['count'] += quantity
                 print(f"Purchased {quantity} blocks of {ID_RULESETS[logic_id]} for {self.format_number(total_price)} energy.")
             else:
-                print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. Total cost: {self.format_number(total_price)}.")
+                print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. "
+                      f"Total cost: {self.format_number(total_price)}, Available: {self.format_number(self.bonus)}")
 
     def calculate_initial_energy_burst(self):
         """Calculate energy burst for cells painted during pause."""
@@ -1384,14 +1391,9 @@ class Factory:
         self.screen.blit(instruction_surface, instruction_rect)
 
     def get_logic_price(self, logic_id):
-        """Get the price per block for the logic, considering its tier."""
-        base_price = self.logic_prices[logic_id]  # This should be the base price for the logic type
-        tier = self.logic_inventory[logic_id]['tier']  # Retrieve the current tier for this logic
-        
-        # If higher tiers increase the price, we scale by a factor (e.g., doubling per tier)
-        price_per_block = base_price * (10 ** (tier - 1))  # Exponential price increase per tier
-        
-        return price_per_block
+        """Get the price per block for the logic, considering its current tier."""
+        tier = self.logic_inventory[logic_id]['tier']
+        return self.get_logic_price_at_tier(logic_id, tier)
 
     def draw_shop(self):
         """Draw the buy menu with the current mode (building or simulation) as the background."""
