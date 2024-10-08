@@ -1069,6 +1069,10 @@ class Factory:
         owned_blocks = self.logic_inventory[logic_id]['count']
         max_additional_blocks = total_cells - (placed_blocks + owned_blocks)
 
+        if quantity == 'MAX':
+            # Set quantity to the maximum number of additional blocks the player can buy
+            quantity = max_additional_blocks
+
         if quantity == '+TIER':
             # Get current and next tier
             current_tier = self.logic_inventory[logic_id]['tier']
@@ -1121,6 +1125,15 @@ class Factory:
                 print(f"Not enough energy to purchase {quantity} blocks of {ID_RULESETS[logic_id]}. "
                       f"Total cost: {self.format_number(total_price)}, Available: {self.format_number(self.bonus)}")
 
+    def calculate_popup_dimensions(self, max_logic_name_width, max_price_width, logic_count):
+        """Calculate and return the popup box dimensions."""
+        button_area_width = (70 + 10) * 4  # Width for 4 buttons with spacing (including MAX button)
+        box_width = max_logic_name_width + max_price_width + button_area_width + 120
+        box_height = 80 + logic_count * 50
+        box_x = (self.width - box_width) // 2
+        box_y = (self.height - box_height) // 2
+        return box_width, box_height, box_x, box_y
+    
     def calculate_initial_energy_burst(self):
         """Calculate energy burst for cells painted during pause."""
         surviving_cells = 0
@@ -1428,15 +1441,6 @@ class Factory:
 
         return max_logic_name_width, max_price_width
 
-    def calculate_popup_dimensions(self, max_logic_name_width, max_price_width, logic_count):
-        """Calculate and return the popup box dimensions."""
-        button_area_width = (70 + 10) * 3  # Width for 3 buttons with spacing
-        box_width = max_logic_name_width + max_price_width + button_area_width + 80
-        box_height = 80 + logic_count * 50
-        box_x = (self.width - box_width) // 2
-        box_y = (self.height - box_height) // 2
-        return box_width, box_height, box_x, box_y
-
     def draw_popup_background(self, box_x, box_y, box_width, box_height):
         """Draw the popup background."""
         popup_rect = pygame.Rect(box_x, box_y, box_width, box_height)
@@ -1478,13 +1482,13 @@ class Factory:
         self.screen.blit(surface, position)
 
     def draw_buy_buttons(self, font, logic_id, max_logic_name_width, max_price_width, box_x, y_offset):
-        """Draw the buy buttons (Buy: 1 | 25 | +TIER) for a logic type."""
+        """Draw the buy buttons (Buy: 1 | 25 | MAX | +TIER) for a logic type."""
         start_x = box_x + max_logic_name_width + max_price_width + 80
         self.draw_text(font, "Buy:", (start_x, y_offset))  # Draw "Buy:" label
 
         start_x += font.size("Buy: ")[0] + 10  # Adjust for buttons
 
-        quantities = [1, 25, '+TIER']
+        quantities = [1, 25, 'MAX', '+TIER']
         for qty in quantities:
             button_text = str(qty)
             button_width = font.size(button_text)[0] + 20
@@ -1496,7 +1500,7 @@ class Factory:
             self.buy_buttons.append((button_rect, logic_id, qty))
 
             start_x += button_width + 10  # Move to next button
-
+            
     def draw_text_centered(self, font, text, rect):
         """Draw text centered within a given rectangle."""
         text_surface = font.render(text, True, (255, 255, 255))
