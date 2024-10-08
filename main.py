@@ -483,7 +483,7 @@ class Factory:
         elif event.key == pygame.K_TAB:
             self.toggle_mode('simulation', 'building')
 
-        elif event.key == pygame.K_SPACE and self.mode == 'simulation':
+        elif event.key == pygame.K_SPACE:
             self.paused = not self.paused
 
         elif event.key == pygame.K_d:
@@ -1179,7 +1179,7 @@ class Factory:
         
     def update(self):
         """Update the simulation."""
-        if self.mode == 'simulation' and not self.paused:
+        if not self.paused:
             # Clear the undo history when the simulation is unpaused
             if self.cell_state_grid_history:
                 self.cell_state_grid_history.clear()
