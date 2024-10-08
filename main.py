@@ -607,12 +607,76 @@ class Factory:
                 self.handle_shop_mouse_event(event)
             else:
                 self.handle_general_mouse_event(event)
+                
+    def get_scaled_font_size(self, available_height):
+        """Calculate the largest font size that fits all protips within the available height."""
+        max_font_size = 100  # Start with a maximum font size
+        min_font_size = 6   # Minimum font size for readability
+
+        # Loop through font sizes from max to min
+        for font_size in range(max_font_size, min_font_size - 1, -2):
+            font = pygame.font.SysFont(None, font_size)
+            total_height = sum(font.size(protip)[1] for protip in self.protips) + len(self.protips) * 12  # 10 px gap
+            if total_height <= available_height:
+                return font_size
+
+        return min_font_size  # If no size fits, return the minimum font size
+    
+    def draw_protip_popup(self):
+        """Draw the Protip popup on the screen, fitting within 50% of the available space."""
+        # Define maximum dimensions for the popup
+        max_popup_width = self.width // 2
+        max_popup_height = self.height // 2
+        popup_x = (self.width - max_popup_width) // 2
+        popup_y = (self.height - max_popup_height) // 2
+
+        # Background for the popup
+        popup_rect = pygame.Rect(popup_x, popup_y, max_popup_width, max_popup_height)
+        pygame.draw.rect(self.screen, (50, 50, 50), popup_rect)
+
+        # Draw title
+        font_title = pygame.font.SysFont(None, 48)
+        title_surface = font_title.render("Protip List", True, (255, 255, 255))
+        title_rect = title_surface.get_rect(center=(self.width // 2, popup_y + 30))
+        self.screen.blit(title_surface, title_rect)
+
+        # Dynamically scale font for protips
+        available_height = max_popup_height - 60  # Leave space for the title
+        font_size = self.get_scaled_font_size(available_height)
+        font = pygame.font.SysFont(None, font_size)
+
+        # Display all protips
+        y_offset = popup_y + 60
+        for protip in self.protips:
+            protip_surface = font.render(protip, True, (255, 255, 255))
+            self.screen.blit(protip_surface, (popup_x + 20, y_offset))
+            y_offset += protip_surface.get_height() + 10  # Add space between tips
+
+        # Instructions to close
+        instructions = "Press 'P' to close."
+        instructions_surface = font.render(instructions, True, (255, 255, 255))
+        instructions_rect = instructions_surface.get_rect(center=(self.width // 2, popup_y + max_popup_height - 30))
+        self.screen.blit(instructions_surface, instructions_rect)
+
+    def toggle_protip_popup(self):
+        """Toggle the Protip popup on or off."""
+        if self.mode == 'protip':
+            self.close_current_menu()  # Close the protip popup and return to the previous mode
+        else:
+            # Save the current mode and paused state
+            self.previous_mode = self.mode
+            self.paused_before_menu = self.paused
+            self.mode = 'protip'
+            self.paused = True  # Pause the game when in protip mode
 
     def handle_keydown(self, event):
         """Handle keydown events based on the current mode."""
         if event.key == pygame.K_ESCAPE:
             self.handle_escape_key()
-
+            
+        elif event.key == pygame.K_p:
+            self.toggle_protip_popup()
+        
         elif event.key == pygame.K_i:
             self.toggle_info_panel()
             
@@ -840,16 +904,19 @@ class Factory:
 
     def handle_escape_key(self):
         """Handle the escape key behavior."""
-        if self.mode in ['menu', 'shop', 'stats']:
+        if self.mode == 'protip':
+            self.toggle_protip_popup()  # Close the Protip popup when pressing Escape
+        elif self.mode in ['menu', 'shop', 'stats']:
             self.close_current_menu()
         else:
             self.open_menu('menu')  # Open copy/paste menu when no other menu is open
-            
+
     def close_current_menu(self):
         """Close the current menu and return to the previous mode."""
-        if self.mode in ['menu', 'shop', 'stats']:
+        if self.mode in ['menu', 'shop', 'stats', 'protip']:
             self.mode = self.previous_mode  # Go back to the previous mode
-            self.paused = True  # Keep the game paused when exiting a menu
+            # Restore the paused state to what it was before opening the menu
+            self.paused = self.paused_before_menu
 
     def open_menu(self, new_mode):
         """Open a new menu, saving the current mode."""
@@ -1697,18 +1764,18 @@ class Factory:
         self.screen.fill((90, 90, 180))  # Clear screen
 
         if self.mode == 'menu':
-            # Draw the game in the background
             self.draw_game()
             self.draw_menu()
         elif self.mode == 'shop':
             self.draw_game()
             self.draw_shop()
         elif self.mode == 'stats':
-            # Draw stats popup over the current game screen
             self.draw_game()
             self.draw_stats()
+        elif self.mode == 'protip':
+            self.draw_game()
+            self.draw_protip_popup()
         else:
-            # Draw the grid in either building or simulation mode
             self.draw_game()
 
     def draw_game(self):
@@ -1912,7 +1979,8 @@ class Factory:
             "Space: Pause | "
             "Ctrl Z: Undo | "
             "C: Copy (drag and release) | "
-            "V: Paste"
+            "V: Paste | "
+            "P: Protips "
         )
         instructions_surface = self.render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
         self.screen.blit(instructions_surface, (10, self.height - 25))
