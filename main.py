@@ -573,20 +573,18 @@ class Factory:
         # Paste the cells depending on the current mode
         if self.mode == 'building':
             #print("Pasting in 'building' mode...")
-            self.paste_cells(target_corner, self.building_copied_cells, self.building_copy_center, self.logic_grid)
+            self.paste_cells(target_corner, self.building_copied_cells, self.building_copy_center, self.logic_grid, self.mode)
         elif self.mode == 'simulation':
             #print("Pasting in 'simulation' mode...")
-            self.paste_cells(target_corner, self.sim_copied_cells, self.sim_copy_center, self.cell_state_grid)
+            self.paste_cells(target_corner, self.sim_copied_cells, self.sim_copy_center, self.cell_state_grid, self.mode)
         #print("Paste process completed.")
 
-    def paste_cells(self, target_corner, copied_cells, copy_center, grid):
+    def paste_cells(self, target_corner, copied_cells, copy_center, grid, mode):
         """ Paste the copied cells at the new location centered around target_corner. """
         if not copied_cells:
             print("No cells to paste.")
             return  # No cells to paste
 
-        #print(f"Pasting cells centered at {target_corner}...")
-        
         # The grid location to center the paste
         target_col, target_row = target_corner
 
@@ -594,16 +592,47 @@ class Factory:
         paste_start_row = target_row - (len(copied_cells) // 2)
         paste_start_col = target_col - (len(copied_cells[0]) // 2)
 
-        # Paste the copied cells relative to the calculated top-left corner
         for r in range(len(copied_cells)):
             for c in range(len(copied_cells[0])):
                 target_r = paste_start_row + r
                 target_c = paste_start_col + c
 
-                # Make sure we are not out of bounds
+                # Make sure we are within bounds
                 if 0 <= target_r < self.grid_size[0] and 0 <= target_c < self.grid_size[1]:
-                    grid[target_r][target_c] = copied_cells[r][c]
-        #print(f"Pasting completed.")
+                    if mode == 'building':
+                        # Handle logic grid
+                        logic_id_to_paste = copied_cells[r][c]
+                        existing_logic_id = grid[target_r, target_c]
+
+                        # Check if we can place the logic block
+                        if logic_id_to_paste == RULESET_IDS["Void"] or logic_id_to_paste in self.infinite_logic_ids:
+                            # Can place freely
+
+                            # Handle the existing logic block (refund if necessary)
+                            if existing_logic_id != RULESET_IDS["Void"] and existing_logic_id not in self.infinite_logic_ids:
+                                self.logic_inventory[existing_logic_id]['count'] += 1
+
+                            grid[target_r, target_c] = logic_id_to_paste
+
+                        else:
+                            # Check if we have enough inventory
+                            if self.logic_inventory.get(logic_id_to_paste, {'count': 0})['count'] > 0:
+                                # Handle the existing logic block (refund if necessary)
+                                if existing_logic_id != RULESET_IDS["Void"] and existing_logic_id not in self.infinite_logic_ids:
+                                    self.logic_inventory[existing_logic_id]['count'] += 1
+
+                                # Place the logic block
+                                grid[target_r, target_c] = logic_id_to_paste
+
+                                # Decrease inventory
+                                self.logic_inventory[logic_id_to_paste]['count'] -= 1
+                            else:
+                                # Not enough inventory, cannot place the logic block
+                                # Do not change the grid cell (leave existing logic block in place)
+                                pass
+                    elif mode == 'simulation':
+                        # For simulation mode, handle cell_state_grid
+                        grid[target_r, target_c] = copied_cells[r][c]
 
     def xy(self):
         """
@@ -1312,7 +1341,7 @@ class Factory:
             color_proportions = self.minute_color_counts / total_living_cells
             simpson_index = 1.0 / np.sum(color_proportions ** 2)
             max_simpson_index = len(PRIMARY_COLORS)
-            self.diversity_bonus = (simpson_index / max_simpson_index) * 0.1  # Diversity bonus as a percentage
+            self.diversity_bonus = (simpson_index / max_simpson_index) * 1.0  # Diversity bonus as a percentage
         else:
             self.diversity_bonus = 0.0
 
