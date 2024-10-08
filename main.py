@@ -7,6 +7,42 @@ import zlib
 import pyperclip
 import hashlib
 
+protips = """
+
+Void Rule: The Void ruleset removes all cells and generates no energy.
+
+Conway Rule: The standard Conway rule generates basic energy with cells surviving on 2 or 3 neighbors.
+
+Energy Boost: Moving patterns like gliders generate more energy, while static patterns earn less.
+
+Tier Bonus: Higher-tier logic blocks generate extra energy when they bring cells to life.
+
+Dynamic Colors: Cell color changes based on neighboring cells, and cells tend to adopt the average color of their neighbors.
+
+Energy Penalty: Frequently reused cells generate less energy. Let cells stay dead longer for a bigger energy boost.
+
+Grid Reshuffling: Using different logic sets in distinct parts of the grid can maximize energy diversity and bonuses.
+
+Physical Offense: Active cells increase your offense score. Keep cells moving for more offensive power.
+
+Physical Defense: Static, surviving cells increase your defense. Balance stability and movement to optimize both.
+
+Buy Logic Blocks: Visit the shop to buy logic blocks and increase the power of your chosen ruleset.
+
+Undo: Made a mistake? Use Ctrl + Z to undo your last action in building mode or simulation mode.
+
+Energy Tiers: Max out your logic blocks to unlock higher tiers and more powerful cell behaviors.
+
+Energy Diversity: Using multiple primary colors for cells increases your energy diversity bonus.
+
+Upgrade Blocks: Once you’ve maxed out a logic block, upgrade it to the next tier for bigger benefits!
+
+Simulation Pause: When paused, you can paint cells to prepare for an energy burst once the simulation resumes.
+
+Flood Fill: Use the Fill Bucket (F) to spread a logic block quickly across an area of the grid.
+
+"""
+
 # Define available rulesets
 RULESETS = {
     "Void": {"B": [], "S": []},  # All cells die
@@ -40,25 +76,25 @@ logic_base_energy_array[RULESET_IDS["Void"]] = 0  # Void generates no energy
 
 # Define primary colors in RGB space, adding pure white and black
 PRIMARY_COLORS = [
-    (255, 0, 0),     # Red (Fire)
-    (0, 0, 255),     # Blue (Water)
-    (0, 255, 0),     # Green (Bio)
-    (255, 255, 0),   # Yellow (Lightning)
-    (0, 255, 255),   # Cyan (Ice)
-    (255, 0, 255),   # Magenta (Energy)
-    (255, 255, 255), # White (Armor)
-    (0, 0, 0)        # Black (True Damage)
+    (255, 0, 0),     # Red (Entropy)
+    (0, 0, 255),     # Blue (Flow)
+    (0, 255, 0),     # Green (Growth)
+    (255, 255, 0),   # Yellow (Pulse)
+    (0, 255, 255),   # Cyan (Stasis)
+    (255, 0, 255),   # Magenta (Force)
+    (255, 255, 255), # White (Structure)
+    (0, 0, 0)        # Black (Singularity)
 ]
 
 ELEMENTAL_NAMES = [
-    "Fire",
-    "Water",
-    "Bio",
-    "Lightning",
-    "Ice",
-    "Energy",
-    "Armor",
-    "True Damage"
+    "Entropy",     # Formerly Fire
+    "Flow",        # Formerly Water
+    "Growth",      # Formerly Bio
+    "Pulse",       # Formerly Lightning
+    "Stasis",      # Formerly Ice
+    "Force",       # Formerly Energy
+    "Structure",   # Formerly Armor
+    "Singularity"  # Formerly True Damage
 ]
 
 class Factory:
@@ -73,6 +109,7 @@ class Factory:
         fps_drawing=60,
         fps_simulation=60
     ):
+        
         # Initialize core settings
         self.init_core_settings(grid_size, cell_size, margin, n_colors, window_title, fullscreen, fps_drawing, fps_simulation)
 
@@ -96,11 +133,41 @@ class Factory:
 
         # Initialize clipboard support
         self.init_clipboard()
-
+        
+        # Parse protips into a list
+        self.protips = [tip.strip() for tip in protips.strip().split('\n\n') if tip.strip()]
+        self.current_protip_index = 0
+        self.last_protip_time = 0.0
+        self.protip_interval = 5.0  # seconds
+        
+        # Loading screen setup
+        self.mode = 'loading'
+        self.loading_start_time = None
+        self.loading_duration = 20.0  # in seconds
+        self.loading_grid_size = (32, 32)
+        self.loading_cell_size = 16
+        self.loading_grid = np.zeros(self.loading_grid_size, dtype=int)
+        self.loading_glider_position = (1, 1)  # initial position
+        self.setup_loading_glider()
+        
         # Modes and pause state
         self.mode = 'loading'
         self.previous_mode = 'building'
         self.paused = True
+        
+    def setup_loading_glider(self):
+        """Set up an upward-facing spaceship in the loading grid."""
+        # A simple upward-facing spaceship pattern
+        spaceship = [(1, 0), (1, 1), (1, 2), (0, 2), (2, 1)]
+        
+        # Set the offset for positioning the spaceship
+        x_offset, y_offset = self.loading_glider_position
+        
+        # Loop through the spaceship coordinates and place them on the grid
+        for dx, dy in spaceship:
+            x = (x_offset + dx) % self.loading_grid_size[0]
+            y = (y_offset + dy) % self.loading_grid_size[1]
+            self.loading_grid[x, y] = 1
 
     def init_core_settings(self, grid_size, cell_size, margin, n_colors, window_title, fullscreen, fps_drawing, fps_simulation):
         """Initialize core settings for the game."""
@@ -240,7 +307,8 @@ class Factory:
         self.frame_counter = 0
         self.color_counts = np.zeros(len(PRIMARY_COLORS), dtype=int)
         self.energy = 0
-
+        self.cell_last_alive_step = np.full(self.grid_size, -5, dtype=np.int32)  # Initialize with -T_max
+        self.current_time_step = 0  # Initialize the current time step
         self.core_energy_generated_last = 0
         self.bonus_energy_rate = 0.0
         self.total_energy_generated = 0
@@ -378,20 +446,85 @@ class Factory:
                 pygame.display.flip()
 
     def handle_loading(self):
-        """Display a loading screen and precompile Numba functions."""
-        #self.screen.fill((0, 0, 0))
-        font = pygame.font.SysFont(None, 48)
-        loading_text = font.render("Loading...", True, (255, 255, 255))
-        text_rect = loading_text.get_rect(center=(self.width // 2, self.height // 2))
-        self.screen.blit(loading_text, text_rect)
+        """Display the loading screen with a moving glider and changing protips."""
+        current_time = pygame.time.get_ticks() / 1000.0  # Get current time in seconds
+        if self.loading_start_time is None:
+            self.loading_start_time = current_time
+            self.precompile_numba_functions()  # Precompile Numba functions
+
+        elapsed_time = current_time - self.loading_start_time
+        if elapsed_time >= self.loading_duration:
+            # Loading complete
+            self.mode = 'building'
+            self.paused = True
+            return
+
+        # Update the loading grid (move the glider)
+        self.update_loading_grid()
+
+        # Update protip if needed
+        if current_time - self.last_protip_time >= self.protip_interval:
+            self.current_protip_index = (self.current_protip_index + 1) % len(self.protips)
+            self.last_protip_time = current_time
+
+        # Draw the loading screen
+        self.draw_loading_screen()
+
+    def update_loading_grid(self):
+        """Update the loading grid with Game of Life rules."""
+        grid = self.loading_grid
+        neighbor_count = convolve(grid, self.neighbor_offsets)
+        # Apply rules
+        birth = (grid == 0) & (neighbor_count == 3)
+        survival = (grid == 1) & ((neighbor_count == 2) | (neighbor_count == 3))
+        grid[:, :] = 0  # Reset grid
+        grid[birth | survival] = 1
+
+    def draw_loading_screen(self):
+        """Draw the loading screen with the grid, glider, protip, and text."""
+        self.screen.fill((0, 0, 0))  # Clear screen with black
+
+        # Draw the grid
+        grid = self.loading_grid
+        cell_size = self.loading_cell_size
+        grid_width = grid.shape[1] * cell_size
+        grid_height = grid.shape[0] * cell_size
+        grid_x = (self.width - grid_width) // 2
+        grid_y = (self.height - grid_height) // 2 - 50  # Offset upward to make space for text
+
+        for i in range(grid.shape[0]):
+            for j in range(grid.shape[1]):
+                if grid[i, j] == 1:
+                    x = grid_x + j * cell_size
+                    y = grid_y + i * cell_size
+                    pygame.draw.rect(self.screen, (255, 255, 255), (x, y, cell_size, cell_size))
+
+        # Draw the loading text
+        font_large = pygame.font.SysFont(None, 72)
+        loading_text = "CREATING REALITY"
+        loading_surface = font_large.render(loading_text, True, (255, 255, 255))
+        loading_rect = loading_surface.get_rect(center=(self.width // 2, grid_y + grid_height + 60))
+        self.screen.blit(loading_surface, loading_rect)
+
+        font_medium = pygame.font.SysFont(None, 48)
+        please_text = "PLEASE HANG ON"
+        please_surface = font_medium.render(please_text, True, (255, 255, 255))
+        please_rect = please_surface.get_rect(center=(self.width // 2, grid_y + grid_height + 120))
+        self.screen.blit(please_surface, please_rect)
+
+        # Draw the protip
+        font = pygame.font.SysFont(None, 36)
+        protip_text = self.protips[self.current_protip_index]
+        protip_lines = protip_text.split('\n')
+        protip_surfaces = [font.render(line, True, (255, 255, 255)) for line in protip_lines]
+        total_height = sum(surface.get_height() for surface in protip_surfaces)
+        y_offset = self.height - total_height - 30
+        for surface in protip_surfaces:
+            rect = surface.get_rect(center=(self.width // 2, y_offset))
+            self.screen.blit(surface, rect)
+            y_offset += surface.get_height()
+
         pygame.display.flip()
-
-        # Pre-compile Numba functions by calling them with dummy data
-        self.precompile_numba_functions()
-
-        # After loading is done, switch to 'building' mode
-        self.mode = 'building'
-        self.paused = True
 
     def precompile_numba_functions(self):
         """Precompile Numba functions by calling them with dummy data."""
@@ -405,6 +538,9 @@ class Factory:
         dummy_colors_array = self.colors_array
         dummy_logic_base_energy_array = logic_base_energy_array
         dummy_logic_inventory_array = np.zeros((len(RULESETS), 2), dtype=np.int32)
+        dummy_cell_last_alive_step = np.full(self.grid_size, -5, dtype=np.int32)
+        dummy_current_time_step = 0
+        dummy_T_max = 5
 
         update_cells(
             dummy_cell_state_grid,
@@ -416,7 +552,10 @@ class Factory:
             dummy_neighbor_offsets,
             dummy_colors_array,
             dummy_logic_inventory_array,
-            dummy_logic_base_energy_array
+            dummy_logic_base_energy_array,
+            dummy_cell_last_alive_step,
+            dummy_current_time_step,
+            dummy_T_max
         )
 
     def cycle_ruleset(self, forward=True):
@@ -1183,7 +1322,10 @@ class Factory:
             # Clear the undo history when the simulation is unpaused
             if self.cell_state_grid_history:
                 self.cell_state_grid_history.clear()
-
+                
+            # Increment the current time step
+            self.current_time_step += 1
+            
             # Store previous cell state grid before update
             if hasattr(self, 'previous_cell_state_grid'):
                 previous_cell_state_grid = self.cell_state_grid.copy()
@@ -1208,7 +1350,10 @@ class Factory:
                 self.neighbor_offsets,
                 self.colors_array,
                 logic_inventory_array,  # Pass the logic inventory array
-                logic_base_energy_array  # Pass the base energy array here
+                logic_base_energy_array,  # Pass the base energy array here
+                self.cell_last_alive_step,
+                self.current_time_step,
+                5  # T_max value, adjust as needed
             )
 
             # Track whether any Tier 2 or higher blocks are contributing to energy generation
@@ -2005,7 +2150,10 @@ def update_cells(
     neighbor_offsets,
     colors_array,
     logic_inventory_array,
-    logic_base_energy_array  # Pass base energy array as a parameter
+    logic_base_energy_array,
+    cell_last_alive_step,
+    current_time_step,
+    T_max
 ):
     rows, cols = cell_state_grid.shape
     new_grid = cell_state_grid.copy()
@@ -2045,6 +2193,8 @@ def update_cells(
                 if not survived:
                     new_grid[i, j] = dead_cell_index
                 else:
+                    # Cell survives
+                    cell_last_alive_step[i, j] = current_time_step
                     # Calculate the average color of the living neighbors
                     if live_neighbors > 0:
                         avg_color = neighbor_color_sum[i, j] / live_neighbors
@@ -2057,22 +2207,20 @@ def update_cells(
                         born = True
                         break
                 if born and live_neighbors > 0:
+                    # Cell is born
+                    time_since_last_alive = current_time_step - cell_last_alive_step[i, j]
+                    energy_multiplier = min(1.0, time_since_last_alive / T_max)
+                    # Calculate energy
+                    base_energy = logic_base_energy_array[ruleset_id]
+                    logic_tier = logic_inventory_array[ruleset_id, 1]
+                    tier_bonus = (logic_tier - 1)
+                    energy_to_add = (base_energy + tier_bonus) * energy_multiplier
+                    energy_generated += energy_to_add
+                    births_count += 1  # Increment births count
+                    cell_last_alive_step[i, j] = current_time_step  # Update last alive time
+                    # Update cell state
                     avg_color = neighbor_color_sum[i, j] / live_neighbors
                     new_grid[i, j] = find_closest_color(colors_array, avg_color, num_colors)
-                    births_count += 1  # Increment births count
-
-                    # Retrieve the tier of the logic block from logic_inventory_array
-                    logic_tier = logic_inventory_array[ruleset_id, 1]  # Column 1 stores tier info
-
-                    # Calculate energy to add
-                    base_energy = logic_base_energy_array[ruleset_id]  # Use the NumPy array
-                    tier_bonus = (logic_tier - 1)  # Each tier beyond 1 adds 1 extra energy
-
-                    # Ensure energy scales correctly with tier
-                    energy_to_add = base_energy + tier_bonus
-
-                    # Update total energy
-                    energy_generated += energy_to_add
 
     return new_grid, births_count, energy_generated
 
