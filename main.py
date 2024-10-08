@@ -100,9 +100,9 @@ ELEMENTAL_NAMES = [
 class Factory:
     def __init__(
         self,
-        grid_size=(42, 84),
-        cell_size=21,
-        margin=5,
+        grid_size=(64, 128),
+        cell_size=16,
+        margin=2,
         n_colors=64,
         window_title="Battlecells",
         fullscreen=False,
@@ -2196,18 +2196,22 @@ def shift_grid(grid, shift_row, shift_col):
     
     return result
 
-@njit
+@njit(parallel=True)
 def convolve(grid, offsets):
-    """Helper function to compute neighbor sums via manual shifting."""
+    """Parallel neighbor counting using Numba."""
     rows, cols = grid.shape
     neighbor_count = np.zeros((rows, cols), dtype=np.int32)
 
-    for offset in offsets:
-        neighbor_count += shift_grid(grid, offset[0], offset[1])
+    for idx in range(len(offsets)):
+        offset = offsets[idx]
+        shifted_grid = shift_grid(grid, offset[0], offset[1])
+        for i in range(rows):
+            for j in range(cols):
+                neighbor_count[i, j] += shifted_grid[i, j]
 
     return neighbor_count
 
-@njit
+@njit(parallel=True)
 def update_cells(
     cell_state_grid,
     logic_grid,
