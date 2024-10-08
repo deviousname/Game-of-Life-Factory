@@ -246,7 +246,9 @@ class Factory:
         self.total_energy_generated = 0
         self.energy_generation_timer = 0.0
         self.energy_generation_rate = 0
-
+        self.sim_copied_cells = []
+        self.sim_copy_center = []
+        self.building_copied_cells = []
         self.scientific_notation = False
         self.minute_new_cells = 0
         self.minute_static_cells = 0
