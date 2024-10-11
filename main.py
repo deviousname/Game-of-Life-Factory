@@ -619,22 +619,68 @@ class Factory:
     def zoom_in(self):
         """Increase the zoom level and adjust the grid view to stay centered on the mouse."""
         mouse_x, mouse_y = pygame.mouse.get_pos()
-        grid_mouse_x, grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))  # Get grid coordinates under the mouse
+        screen_x, screen_y = mouse_x, mouse_y - 30  # Adjust for UI elements if necessary
 
+        # Save old zoom level and cell_draw_size
+        old_zoom = self.zoom_level
+        old_cell_draw_size = self.current_cell_size + self.margin
+
+        # Increase zoom level
         new_zoom = min(self.zoom_level + self.zoom_step, self.max_zoom)
         if new_zoom != self.zoom_level:
-            prev_cell_size = self.current_cell_size
+            # Update zoom level and cell size
             self.zoom_level = new_zoom
             self.current_cell_size = self.cell_size * self.zoom_level
+            new_cell_draw_size = self.current_cell_size + self.margin
 
-            new_grid_mouse_x, new_grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))
-            offset_x = (new_grid_mouse_x - grid_mouse_x) * self.current_cell_size
-            offset_y = (new_grid_mouse_y - grid_mouse_y) * self.current_cell_size
+            # Calculate the world position (grid_x, grid_y) under the mouse
+            grid_x = (screen_x + self.grid_view_x) / old_cell_draw_size
+            grid_y = (screen_y + self.grid_view_y) / old_cell_draw_size
 
-            # Adjust the view to keep the mouse position centered
-            self.scroll_grid_view(offset_x, offset_y)
+            # Update grid_view_x and grid_view_y to keep the cell under the mouse stationary
+            self.grid_view_x = grid_x * new_cell_draw_size - screen_x
+            self.grid_view_y = grid_y * new_cell_draw_size - screen_y
 
-            self.calculate_grid_clones()  # Recalculate grid clones for seamless wrapping
+            # Wrap grid_view_x and grid_view_y within the grid bounds
+            grid_pixel_width = self.grid_size[1] * new_cell_draw_size
+            grid_pixel_height = self.grid_size[0] * new_cell_draw_size
+            self.grid_view_x %= grid_pixel_width
+            self.grid_view_y %= grid_pixel_height
+
+            self.calculate_grid_clones()
+
+    def zoom_out(self):
+        """Decrease the zoom level and adjust the grid view to stay centered on the mouse."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        screen_x, screen_y = mouse_x, mouse_y - 30  # Adjust for UI elements if necessary
+
+        # Save old zoom level and cell_draw_size
+        old_zoom = self.zoom_level
+        old_cell_draw_size = self.current_cell_size + self.margin
+
+        # Decrease zoom level
+        new_zoom = max(self.zoom_level - self.zoom_step, self.min_zoom)
+        if new_zoom != self.zoom_level:
+            # Update zoom level and cell size
+            self.zoom_level = new_zoom
+            self.current_cell_size = self.cell_size * self.zoom_level
+            new_cell_draw_size = self.current_cell_size + self.margin
+
+            # Calculate the world position (grid_x, grid_y) under the mouse
+            grid_x = (screen_x + self.grid_view_x) / old_cell_draw_size
+            grid_y = (screen_y + self.grid_view_y) / old_cell_draw_size
+
+            # Update grid_view_x and grid_view_y to keep the cell under the mouse stationary
+            self.grid_view_x = grid_x * new_cell_draw_size - screen_x
+            self.grid_view_y = grid_y * new_cell_draw_size - screen_y
+
+            # Wrap grid_view_x and grid_view_y within the grid bounds
+            grid_pixel_width = self.grid_size[1] * new_cell_draw_size
+            grid_pixel_height = self.grid_size[0] * new_cell_draw_size
+            self.grid_view_x %= grid_pixel_width
+            self.grid_view_y %= grid_pixel_height
+
+            self.calculate_grid_clones()
 
     def scroll_grid_view(self, offset_x, offset_y):
         """Scroll the grid view based on the offset caused by zooming."""
@@ -643,27 +689,6 @@ class Factory:
         self.grid_view_y += offset_y
         self.grid_view_x %= self.width  # Wrap around horizontally for toroidal effect
         self.grid_view_y %= self.height  # Wrap around vertically for toroidal effect
-
-    def zoom_out(self):
-        """Decrease the zoom level and adjust the grid view to stay centered on the mouse."""
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        grid_mouse_x, grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))  # Get grid coordinates under the mouse
-
-        new_zoom = max(self.zoom_level - self.zoom_step, self.min_zoom)
-        if new_zoom != self.zoom_level:
-            prev_cell_size = self.current_cell_size
-            self.zoom_level = new_zoom
-            self.current_cell_size = self.cell_size * self.zoom_level
-
-            new_grid_mouse_x, new_grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))
-            offset_x = (new_grid_mouse_x - grid_mouse_x) * self.current_cell_size
-            offset_y = (new_grid_mouse_y - grid_mouse_y) * self.current_cell_size
-
-            # Adjust the view to keep the mouse position centered
-            self.scroll_grid_view(offset_x, offset_y)
-
-            self.calculate_grid_clones()  # Recalculate grid clones for seamless wrapping
-
 
     def handle_events(self):
         """Handle user input events."""
@@ -1265,7 +1290,9 @@ class Factory:
             self.handle_simulation_mode(row, col, brush_offsets)
 
     def get_grid_position(self, pos):
-        """Convert screen coordinates to grid coordinates, accounting for zoom and panning."""
+        """
+        Convert screen coordinates to grid coordinates, accounting for zoom and panning.
+        """
         x, y = pos
 
         # Adjust for UI elements (e.g., the 30 pixels offset at the top)
@@ -1283,7 +1310,6 @@ class Factory:
         row = int(y / cell_draw_size) % self.grid_size[0]
 
         return col, row
-
 
     def get_brush_offsets(self):
         """Returns the brush offsets based on the current mode and pause state."""
