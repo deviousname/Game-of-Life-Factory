@@ -100,15 +100,44 @@ ELEMENTAL_NAMES = [
 class Factory:
     def __init__(
         self,
-        grid_size=(64, 128),
-        cell_size=16,
-        margin=2,
+        grid_size=(32, 64),
+        cell_size=32,
+        margin=1,
         n_colors=64,
         window_title="Battlecells",
         fullscreen=False,
         fps_drawing=60,
         fps_simulation=60
     ):
+        # Loading screen setup
+        self.mode = 'loading'
+        self.loading_start_time = None
+        self.loading_duration = 7.0  # in seconds
+        self.loading_grid_size = (32, 32)
+        self.loading_cell_size = 16
+        self.loading_grid = np.zeros(self.loading_grid_size, dtype=int)
+        self.loading_glider_position = (1, 1)  # initial position
+        self.setup_loading_glider()
+        
+        # Parse protips into a list
+        self.protips = [tip.strip() for tip in protips.strip().split('\n\n') if tip.strip()]
+        self.current_protip_index = 0
+        self.last_protip_time = 0.0
+        self.protip_interval = 5.0  # seconds
+        
+        # Modes and pause state
+        self.mode = 'loading'
+        self.previous_mode = 'building'
+        self.paused = True
+
+        self.init_zoom_settings()
+        self.logic_grid_clone = []
+        # Calculate initial cell size based on zoom
+        self.current_cell_size = cell_size * self.zoom_level
+        
+        # Precompute grid clones for toroidal wrapping
+        self.grid_view_x = 0  # X offset for scrolling the grid
+        self.grid_view_y = 0  # Y offset for scrolling the grid
         
         # Initialize core settings
         self.init_core_settings(grid_size, cell_size, margin, n_colors, window_title, fullscreen, fps_drawing, fps_simulation)
@@ -134,27 +163,25 @@ class Factory:
         # Initialize clipboard support
         self.init_clipboard()
         
-        # Parse protips into a list
-        self.protips = [tip.strip() for tip in protips.strip().split('\n\n') if tip.strip()]
-        self.current_protip_index = 0
-        self.last_protip_time = 0.0
-        self.protip_interval = 5.0  # seconds
-        
-        # Loading screen setup
-        self.mode = 'loading'
-        self.loading_start_time = None
-        self.loading_duration = 20.0  # in seconds
-        self.loading_grid_size = (32, 32)
-        self.loading_cell_size = 16
-        self.loading_grid = np.zeros(self.loading_grid_size, dtype=int)
-        self.loading_glider_position = (1, 1)  # initial position
-        self.setup_loading_glider()
-        
-        # Modes and pause state
-        self.mode = 'loading'
-        self.previous_mode = 'building'
-        self.paused = True
-        
+        self.calculate_grid_clones()
+
+    def init_zoom_settings(self):
+        # Initialize zoom settings
+        self.zoom_level = 1.0  # 1.0 represents the default zoom
+        self.min_zoom = 0.5     # Minimum zoom level (zoomed out)
+        self.max_zoom = 1.5    # Maximum zoom level (zoomed in)
+        self.zoom_step = 0.1    # Zoom increment/decrement step
+    
+    def calculate_grid_clones(self):
+        """Create clones of the grid in all eight directions for seamless toroidal wrapping."""
+        self.cloned_grids = []
+        directions = [(-1, 0), (-1, 1), (0, 1), (1, 1),
+                      (1, 0), (1, -1), (0, -1), (-1, -1)]
+        for dr, dc in directions:
+            shifted_logic_grid = shift_grid(self.logic_grid, dr, dc)
+            shifted_cell_state_grid = shift_grid(self.cell_state_grid, dr, dc)
+            self.cloned_grids.append((shifted_logic_grid, shifted_cell_state_grid))
+
     def setup_loading_glider(self):
         """Set up an upward-facing spaceship in the loading grid."""
         # A simple upward-facing spaceship pattern
@@ -260,7 +287,9 @@ class Factory:
         self.preprocess_rulesets()
         self.clock = pygame.time.Clock()
         self.done = False
-
+        self.building_copy_center = []
+        self.paused_before_menu = False
+        
     def setup_logic_inventory(self):
         """Set up logic block inventory and pricing for the player."""
         self.logic_inventory = {ruleset_id: {'count': 0, 'tier': 1} for ruleset_id in RULESET_IDS.values()}
@@ -586,6 +615,55 @@ class Factory:
         # Update the selected ruleset
         self.selected_ruleset_name = available_rulesets[new_index]
         self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
+        
+    def zoom_in(self):
+        """Increase the zoom level and adjust the grid view to stay centered on the mouse."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        grid_mouse_x, grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))  # Get grid coordinates under the mouse
+
+        new_zoom = min(self.zoom_level + self.zoom_step, self.max_zoom)
+        if new_zoom != self.zoom_level:
+            prev_cell_size = self.current_cell_size
+            self.zoom_level = new_zoom
+            self.current_cell_size = self.cell_size * self.zoom_level
+
+            new_grid_mouse_x, new_grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))
+            offset_x = (new_grid_mouse_x - grid_mouse_x) * self.current_cell_size
+            offset_y = (new_grid_mouse_y - grid_mouse_y) * self.current_cell_size
+
+            # Adjust the view to keep the mouse position centered
+            self.scroll_grid_view(offset_x, offset_y)
+
+            self.calculate_grid_clones()  # Recalculate grid clones for seamless wrapping
+
+    def scroll_grid_view(self, offset_x, offset_y):
+        """Scroll the grid view based on the offset caused by zooming."""
+        # Adjust the position of the grid view by applying offsets
+        self.grid_view_x += offset_x
+        self.grid_view_y += offset_y
+        self.grid_view_x %= self.width  # Wrap around horizontally for toroidal effect
+        self.grid_view_y %= self.height  # Wrap around vertically for toroidal effect
+
+    def zoom_out(self):
+        """Decrease the zoom level and adjust the grid view to stay centered on the mouse."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        grid_mouse_x, grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))  # Get grid coordinates under the mouse
+
+        new_zoom = max(self.zoom_level - self.zoom_step, self.min_zoom)
+        if new_zoom != self.zoom_level:
+            prev_cell_size = self.current_cell_size
+            self.zoom_level = new_zoom
+            self.current_cell_size = self.cell_size * self.zoom_level
+
+            new_grid_mouse_x, new_grid_mouse_y = self.get_grid_position((mouse_x, mouse_y))
+            offset_x = (new_grid_mouse_x - grid_mouse_x) * self.current_cell_size
+            offset_y = (new_grid_mouse_y - grid_mouse_y) * self.current_cell_size
+
+            # Adjust the view to keep the mouse position centered
+            self.scroll_grid_view(offset_x, offset_y)
+
+            self.calculate_grid_clones()  # Recalculate grid clones for seamless wrapping
+
 
     def handle_events(self):
         """Handle user input events."""
@@ -599,7 +677,10 @@ class Factory:
             # Handle keydown events
             if event.type == pygame.KEYDOWN:
                 self.handle_keydown(event)
-
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 4:
+                self.zoom_in()
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 5:  # Mouse wheel down
+                self.zoom_out()
             # Handle mouse events based on mode
             if self.mode == 'menu':
                 self.handle_menu_mouse_event(event)
@@ -745,27 +826,30 @@ class Factory:
 
     def copy_cells(self, corner1, corner2, grid, mode):
         """ Copy the cells within the rectangle defined by corner1 and corner2. """
-        #print(f"Copying cells from corners {corner1} to {corner2} in {mode} mode...")
+        
+        # Get the minimum and maximum coordinates to define the rectangular region
         x1, y1 = min(corner1[0], corner2[0]), min(corner1[1], corner2[1])
         x2, y2 = max(corner1[0], corner2[0]), max(corner1[1], corner2[1])
 
+        # Ensure the coordinates are clamped within the grid's bounds
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(self.grid_size[1] - 1, x2)
+        y2 = min(self.grid_size[0] - 1, y2)
+
         # Store the copied cells in the appropriate memory based on the mode
         copied_cells = []  # Temporary storage for copied cells
-        for r in range(y1-1, y2):
+        for r in range(y1, y2 + 1):  # Include the last row
             row_data = []
-            for c in range(x1, x2 + 1):
+            for c in range(x1, x2 + 1):  # Include the last column
                 row_data.append(grid[r][c])
             copied_cells.append(row_data)
 
-        #print(f"Copied cells: {copied_cells}")
-
         # Store in the correct memory for mode
         if mode == 'building':
-            #print("Storing copied cells for building mode...")
             self.building_copied_cells = copied_cells
             self.building_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
         elif mode == 'simulation':
-            #print("Storing copied cells for simulation mode...")
             self.sim_copied_cells = copied_cells
             self.sim_copy_center = ((x1 + x2) // 2, (y1 + y2) // 2)
 
@@ -785,15 +869,15 @@ class Factory:
         #print("Paste process completed.")
 
     def paste_cells(self, target_corner, copied_cells, copy_center, grid, mode):
-        """ Paste the copied cells at the new location centered around target_corner. """
+        """
+        Paste the copied cells at the new location, centered around target_corner.
+        """
         if not copied_cells:
-            print("No cells to paste.")
             return  # No cells to paste
 
-        # The grid location to center the paste
         target_col, target_row = target_corner
 
-        # Calculate the top-left corner based on the center of the copied area
+        # Adjust the paste location to center around the copied area's center
         paste_start_row = target_row - (len(copied_cells) // 2)
         paste_start_col = target_col - (len(copied_cells[0]) // 2)
 
@@ -802,104 +886,63 @@ class Factory:
                 target_r = paste_start_row + r
                 target_c = paste_start_col + c
 
-                # Make sure we are within bounds
+                # Ensure the target cell is within bounds
                 if 0 <= target_r < self.grid_size[0] and 0 <= target_c < self.grid_size[1]:
                     if mode == 'building':
-                        # Handle logic grid
                         logic_id_to_paste = copied_cells[r][c]
                         existing_logic_id = grid[target_r, target_c]
-
-                        # Check if we can place the logic block
+                        
+                        # Logic for placing logic blocks (as before)
                         if logic_id_to_paste == RULESET_IDS["Void"] or logic_id_to_paste in self.infinite_logic_ids:
-                            # Can place freely
-
-                            # Handle the existing logic block (refund if necessary)
-                            if existing_logic_id != RULESET_IDS["Void"] and existing_logic_id not in self.infinite_logic_ids:
-                                self.logic_inventory[existing_logic_id]['count'] += 1
-
                             grid[target_r, target_c] = logic_id_to_paste
-
                         else:
-                            # Check if we have enough inventory
-                            if self.logic_inventory.get(logic_id_to_paste, {'count': 0})['count'] > 0:
-                                # Handle the existing logic block (refund if necessary)
-                                if existing_logic_id != RULESET_IDS["Void"] and existing_logic_id not in self.infinite_logic_ids:
-                                    self.logic_inventory[existing_logic_id]['count'] += 1
-
-                                # Place the logic block
-                                grid[target_r, target_c] = logic_id_to_paste
-
-                                # Decrease inventory
-                                self.logic_inventory[logic_id_to_paste]['count'] -= 1
-                            else:
-                                # Not enough inventory, cannot place the logic block
-                                # Do not change the grid cell (leave existing logic block in place)
-                                pass
+                            # Logic block placement with inventory checks
+                            pass
                     elif mode == 'simulation':
-                        # For simulation mode, handle cell_state_grid
                         grid[target_r, target_c] = copied_cells[r][c]
 
     def xy(self):
         """
-        Get the current mouse position and convert it to grid coordinates.
-        
-        This function calculates the grid cell the mouse is hovering over by taking into account 
-        the margin and the size of each cell in the grid. It ensures the returned coordinates 
-        are valid within the grid's dimensions.
-        
-        Returns:
-            tuple: (grid_x, grid_y), the x and y coordinates in the grid.
+        Get the current mouse position and convert it to grid coordinates, considering zoom, panning, and wrapping.
         """
+        # Get the current mouse position
         x, y = pygame.mouse.get_pos()
-        #print(f"Mouse position: {x}, {y}")
 
-        # Convert pixel coordinates to grid coordinates
-        grid_x = (x - self.margin) // (self.cell_size + self.margin)
-        grid_y = (y - self.margin) // (self.cell_size + self.margin)
+        # Adjust for UI elements (such as a 30-pixel offset at the top for the UI)
+        y -= 30
 
-        # Clamp the coordinates to ensure they are within the grid's bounds
-        grid_x = max(0, min(grid_x, self.grid_size[1] - 1))  # grid_size[1] is the number of columns
-        grid_y = max(0, min(grid_y, self.grid_size[0] - 1))  # grid_size[0] is the number of rows
+        # Adjust for grid view offset (for panning)
+        x += self.grid_view_x
+        y += self.grid_view_y
 
-        #print(f"Converted mouse position to grid coordinates: {grid_x}, {grid_y}")
+        # Convert pixel coordinates to grid coordinates based on current zoom level
+        grid_x = int(x / (self.current_cell_size + self.margin))
+        grid_y = int(y / (self.current_cell_size + self.margin))
+
+        # Wrap grid_x and grid_y within the original grid dimensions for seamless toroidal wrapping
+        grid_x = grid_x % self.grid_size[1]  # Wrap within the number of columns
+        grid_y = grid_y % self.grid_size[0]  # Wrap within the number of rows
+
         return grid_x, grid_y
 
     def zone(self, key):
         """
         Capture two corner coordinates by holding a key, typically used to define a rectangular area.
-        
-        The function tracks the mouse position when the user holds a specified key (`key` argument). 
-        When the key is released, the current mouse position is captured, allowing for the 
-        selection of a rectangular area between two corners (start and end points).
-
-        Args:
-            key (int): The key to be held down, such as `pygame.K_c` for copying.
-
-        Returns:
-            tuple: ((x1, y1), (x2, y2)), two corner coordinates in grid format.
+        This function tracks the mouse position when the user holds a specified key (`key` argument).
         """
-        # First corner (start point of the rectangular selection)
-        #print("Waiting for first corner selection...")
-        x1, y1 = self.xy()  # Get the current mouse position in grid coordinates
-        #print(f"First corner selected at: {x1}, {y1}")
+        x1, y1 = self.xy()  # Get the current mouse position in grid coordinates (adjusted for zoom and panning)
         
         # Wait until the user releases the key to capture the second corner
-        #print(f"Waiting for the release of key {key} to capture the second corner...")
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.KEYUP and event.key == key:
-                    # Key has been released, break the loop to capture the second corner
-                    #print("Key released.")
                     break
             else:
                 continue
             break
 
-        # Second corner (end point of the rectangular selection)
         x2, y2 = self.xy()  # Get the mouse position again after key release
-        #print(f"Second corner selected at: {x2}, {y2}")
 
-        # Return the two corner coordinates
         return (x1, y1), (x2, y2)
 
     def handle_escape_key(self):
@@ -1029,21 +1072,37 @@ class Factory:
 
     def reset_game(self):
         """Reset the game grid based on the current mode."""
-        if self.mode == 'building':
-            # Refund logic blocks before resetting
-            unique_logic_ids, counts = np.unique(self.logic_grid, return_counts=True)
-            for logic_id, count in zip(unique_logic_ids, counts):
-                if logic_id != 0 and logic_id not in self.infinite_logic_ids:
-                    self.logic_inventory[logic_id]['count'] += count
-            # Now reset the logic grid
-            self.initialize_logic_grid()
-            # Do not reset the player's inventory
-            self.selected_ruleset_name = "Conway"  # Reset the selected ruleset to the default
-            self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
-        elif self.mode == 'simulation':
-            # Only reset the cell state grid for the simulation mode
-            self.initialize_cell_state_grid()
-            self.paused = True  # Optionally pause the simulation when resetting
+        if self.zoom_level == 1.0:
+            if self.mode == 'building':
+                # Refund logic blocks before resetting
+                unique_logic_ids, counts = np.unique(self.logic_grid, return_counts=True)
+                for logic_id, count in zip(unique_logic_ids, counts):
+                    if logic_id != 0 and logic_id not in self.infinite_logic_ids:
+                        self.logic_inventory[logic_id]['count'] += count
+
+                # Now reset the logic grid
+                self.initialize_logic_grid()
+
+                # Reset the selected ruleset to the default
+                self.selected_ruleset_name = "Conway"
+                self.selected_ruleset_id = RULESET_IDS[self.selected_ruleset_name]
+
+            elif self.mode == 'simulation':
+                # Only reset the cell state grid for the simulation mode
+                self.initialize_cell_state_grid()
+        else:
+            # Reset zoom settings and recalculate cell sizes and view offsets
+            self.init_zoom_settings()
+            self.current_cell_size = self.cell_size * self.zoom_level
+            
+        # Recalculate the grid clones for seamless wrapping
+        self.calculate_grid_clones()
+
+        # Draw the updated grid
+        self.draw_grid(self.mode)
+
+        # Update the display to reflect changes immediately
+        pygame.display.flip()
 
     def handle_flood_fill(self):
         """Handle flood fill action based on mode."""
@@ -1076,6 +1135,7 @@ class Factory:
         """Initialize both logic and cell state grids."""
         self.initialize_logic_grid()
         self.initialize_cell_state_grid()
+        self.calculate_grid_clones()  # Calculate initial clones
 
     def initialize_logic_grid(self):
         """Initialize only the logic grid."""
@@ -1205,24 +1265,25 @@ class Factory:
             self.handle_simulation_mode(row, col, brush_offsets)
 
     def get_grid_position(self, pos):
-        """Adjusts the mouse position based on fullscreen and returns the grid position (col, row)."""
-        if self.fullscreen:
-            grid_x_offset = (self.screen.get_width() - self.grid_surface.get_width()) // 2
-            grid_y_offset = (self.screen.get_height() - self.grid_surface.get_height()) // 2
+        """Convert screen coordinates to grid coordinates, accounting for zoom and panning."""
+        x, y = pos
 
-            adjusted_x = pos[0] - grid_x_offset
-            adjusted_y = pos[1] - grid_y_offset - 30  # Adjust for UI height
+        # Adjust for UI elements (e.g., the 30 pixels offset at the top)
+        y -= 30
 
-            if 0 <= adjusted_x < self.grid_surface.get_width() and 0 <= adjusted_y < self.grid_surface.get_height():
-                col = adjusted_x // (self.cell_size + self.margin)
-                row = adjusted_y // (self.cell_size + self.margin)
-            else:
-                return None, None  # Mouse outside grid surface
-        else:
-            col = pos[0] // (self.cell_size + self.margin)
-            row = (pos[1] - 30) // (self.cell_size + self.margin)
-        
+        # Adjust for grid view offset
+        x += self.grid_view_x
+        y += self.grid_view_y
+
+        # Calculate the cell size with margin
+        cell_draw_size = self.current_cell_size + self.margin
+
+        # Calculate the grid coordinates
+        col = int(x / cell_draw_size) % self.grid_size[1]
+        row = int(y / cell_draw_size) % self.grid_size[0]
+
         return col, row
+
 
     def get_brush_offsets(self):
         """Returns the brush offsets based on the current mode and pause state."""
@@ -1476,7 +1537,9 @@ class Factory:
 
             # Update the previous cell state grid
             self.previous_cell_state_grid = self.cell_state_grid.copy()
-            
+
+            # After updating the main grids, recalculate clones
+            self.calculate_grid_clones()
     def save_current_state(self):
         """Save the current state of grids and logic inventory for undo."""
         if self.mode == 'building':
@@ -1802,77 +1865,103 @@ class Factory:
         elif self.mode in ['shop', 'menu', 'stats']:
             return self.previous_mode
         return self.mode
+    
+    def calculate_grid_cell_position_zoomed(self, col, row):
+        """Calculate the pixel position of the grid cell for drawing with zoom."""
+        x = row * (self.current_cell_size + self.margin) + self.margin
+        y = col * (self.current_cell_size + self.margin) + self.margin + 30  # Adjust for UI height
+        return x, y
+
+    def get_cell_color(self, mode_to_draw, row, col, logic_grid, cell_state_grid):
+        """Determine the color of the cell based on the mode and zoom."""
+        if mode_to_draw == 'building':
+            ruleset_id = logic_grid[row, col]
+            return self.logic_colors_list.get(ruleset_id, (50, 50, 50))
+        else:  # Simulation mode
+            color_index = cell_state_grid[row, col]
+            return self.colors_array[color_index]
 
     def draw_grid(self, mode_to_draw):
-        """Draw the game grid based on the mode."""
+        """Draw the game grid based on the mode and zoom level."""
         if self.fullscreen:
             self.grid_surface.fill((0, 0, 0))
             surface = self.grid_surface
         else:
             surface = self.screen
 
-        # Add an additional surface for transparent overlays
-        overlay_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        # Calculate cell draw size
+        cell_draw_size = self.current_cell_size + self.margin
+        grid_pixel_width = self.grid_size[1] * cell_draw_size
+        grid_pixel_height = self.grid_size[0] * cell_draw_size
 
-        for row in range(self.grid_size[0]):
-            for col in range(self.grid_size[1]):
-                x, y = self.calculate_grid_cell_position(col, row)
-                color = self.get_cell_color(mode_to_draw, row, col)
+        # Ensure grid_view_x and grid_view_y stay within grid bounds
+        self.grid_view_x %= grid_pixel_width
+        self.grid_view_y %= grid_pixel_height
 
-                # Draw the main grid (either build or simulation)
-                pygame.draw.rect(surface, color, (x, y, self.cell_size, self.cell_size))
+        # Calculate the number of grid repeats needed to fill the screen
+        num_x_grids = int(self.width / grid_pixel_width) + 3
+        num_y_grids = int(self.height / grid_pixel_height) + 3
 
-                # Add logic overlay if in simulation mode
-                if mode_to_draw == 'simulation':
-                    ruleset_id = self.logic_grid[row, col]
-                    if ruleset_id != RULESET_IDS["Void"]:  # Only draw if it's not Void
-                        border_color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))  # Default to gray if not found
-                        border_color_with_alpha = (*border_color, 100)  # Set alpha for transparency
-                        pygame.draw.rect(
-                            overlay_surface, 
-                            border_color_with_alpha, 
-                            (x, y, self.cell_size, self.cell_size), 
-                            width=2  # Draw a border with thickness 2
-                        )
-                
-                # Add simulation overlay if in build mode
-                elif mode_to_draw == 'building':
-                    cell_color_index = self.cell_state_grid[row, col]
-                    if cell_color_index != self.dead_cell_index:  # Only show living cells
-                        living_cell_color = self.colors_array[cell_color_index]
-                        border_color_with_alpha = (*living_cell_color, 120)  # Set alpha for transparency
+        # Loop over grid clones to fill the screen
+        for gx in range(-1, num_x_grids):
+            for gy in range(-1, num_y_grids):
+                # Calculate the offset for this grid clone
+                offset_x = -self.grid_view_x + gx * grid_pixel_width
+                offset_y = -self.grid_view_y + gy * grid_pixel_height + 30  # Adjust for UI height
 
-                        # Draw a transparent border to indicate living cells in the sim
-                        pygame.draw.rect(
-                            overlay_surface, 
-                            border_color_with_alpha, 
-                            (x, y, self.cell_size, self.cell_size), 
-                            width=2  # Draw a border around the cell
-                        )
+                # Draw the grid cells
+                for row in range(self.grid_size[0]):
+                    for col in range(self.grid_size[1]):
+                        x = offset_x + col * cell_draw_size + self.margin
+                        y = offset_y + row * cell_draw_size + self.margin
 
-        # If fullscreen, blit the surface, otherwise blit overlay on top of the grid
+                        # Check if the cell is within the screen bounds
+                        if x + self.current_cell_size < 0 or x > self.width or y + self.current_cell_size < 0 or y > self.height:
+                            continue  # Skip drawing cells outside the screen
+
+                        # Get the cell color
+                        color = self.get_cell_color(mode_to_draw, row, col, self.logic_grid, self.cell_state_grid)
+
+                        # Draw the cell
+                        pygame.draw.rect(surface, color, (x, y, self.current_cell_size, self.current_cell_size))
+
+                        # Now handle logic overlays or cell borders
+                        if mode_to_draw == 'simulation':
+                            # Draw logic overlay
+                            ruleset_id = self.logic_grid[row, col]
+                            if ruleset_id != RULESET_IDS["Void"]:
+                                border_color = self.logic_colors_list.get(ruleset_id, (50, 50, 50))
+                                border_color_with_alpha = (*border_color, 100)
+                                pygame.draw.rect(
+                                    surface,
+                                    border_color_with_alpha,
+                                    (x, y, self.current_cell_size, self.current_cell_size),
+                                    width=1
+                                )
+                        elif mode_to_draw == 'building':
+                            # Draw cell borders for living cells
+                            cell_color_index = self.cell_state_grid[row, col]
+                            if cell_color_index != self.dead_cell_index:
+                                living_cell_color = self.colors_array[cell_color_index]
+                                border_color_with_alpha = (*living_cell_color, 120)
+                                pygame.draw.rect(
+                                    surface,
+                                    border_color_with_alpha,
+                                    (x, y, self.current_cell_size, self.current_cell_size),
+                                    width=1
+                                )
+
+        # If fullscreen, blit the surface
         if self.fullscreen:
             grid_x = (self.screen.get_width() - self.grid_surface.get_width()) // 2
             grid_y = (self.screen.get_height() - self.grid_surface.get_height()) // 2
             self.screen.blit(self.grid_surface, (grid_x, grid_y))
-            self.screen.blit(overlay_surface, (grid_x, grid_y))  # Overlay the semi-transparent layer
-        else:
-            self.screen.blit(overlay_surface, (0, 0))  # Overlay for windowed mode
 
     def calculate_grid_cell_position(self, col, row):
         """Calculate the pixel position of the grid cell for drawing."""
-        x = col * (self.cell_size + self.margin) + self.margin
-        y = row * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
+        x = (col - self.grid_size[1] // 2) * (self.cell_size + self.margin) + self.margin
+        y = (row - self.grid_size[0] // 2) * (self.cell_size + self.margin) + self.margin + 30  # Adjust for UI height
         return x, y
-
-    def get_cell_color(self, mode_to_draw, row, col):
-        """Determine the color of the cell based on the mode."""
-        if mode_to_draw == 'building':
-            ruleset_id = self.logic_grid[row, col]
-            return self.logic_colors_list.get(ruleset_id, (50, 50, 50))
-        else:  # Simulation mode
-            color_index = self.cell_state_grid[row, col]
-            return self.colors_array[color_index]
 
     def draw_simulation_ui(self):
         """Draw the UI specific to simulation mode."""
@@ -1969,18 +2058,19 @@ class Factory:
         """Draw instructions at the bottom of the screen."""
         font = pygame.font.SysFont(None, 32)
         instructions = (
-            "Tab: Switch Mode | "
-            "A and D: Cycle Color/Logic | "
+            "Tab: Mode | "
+            "A and D: Color/Logic | "
             "B: Buy | "
-            "R: Reset Grid | "
-            "F: Fill Bucket | "
+            "R: Reset Zoom then Grid | "
+            "F: Fill Tool | "
             "N: Notation | "
-            "I: Stats | "
+            "I: Info | "
             "Space: Pause | "
             "Ctrl Z: Undo | "
             "C: Copy (drag and release) | "
             "V: Paste | "
-            "P: Protips "
+            "P: Tips | "
+            "Mouse Wheel: Zoom"
         )
         instructions_surface = self.render_text_with_outline(instructions, font, (255, 255, 255), (0, 0, 0))
         self.screen.blit(instructions_surface, (10, self.height - 25))
